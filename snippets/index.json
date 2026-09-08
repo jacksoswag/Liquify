@@ -1,0 +1,34 @@
+{
+ "dynamic-search-bar-fixed": {
+  "title": "Dynamic Search Bar (push, not overlap)",
+  "description": "Search/nav bar stays collapsed until hovered or focused (cmd+L), then expands and pushes the page down instead of overlapping it. Also removes the -16px root margin that left an unrendered strip at the bottom of the window."
+ },
+ "remove-all-scrollbars": {
+  "title": "Remove All Scrollbars",
+  "description": "Hides every scrollbar in the client (sidebar, main view, panels, lyrics) while keeping scrolling fully functional."
+ },
+ "hide-switch-to-video": {
+  "title": "Hide Switch to Video Button",
+  "description": "Removes the 'Switch to video' button from the Now Playing view."
+ },
+ "hide-playlist-column-header": {
+  "title": "Hide Playlist Column Header",
+  "description": "Removes the '# / Title / Album / Date added / Time' header row above playlist tracks."
+ },
+ "hide-sort-and-collaborator": {
+  "title": "Hide Sort By & Add Collaborator",
+  "description": "Removes the sort dropdown and the invite-collaborators button from playlist pages."
+ },
+ "hide-add-mix-details-row": {
+  "title": "Hide Add / Mix / Name & Details Row",
+  "description": "Removes the entire Add / Mix / Name & details button row under the playlist header."
+ },
+ "fix-duplicate-metadata-dots": {
+  "title": "Fix Duplicate Playlist Metadata Dots",
+  "description": "Spotify emits two adjacent bullet separators between the playlist owner and the song-count/duration, plus a trailing orphan bullet. This collapses them to a single separator."
+ },
+ "liquid-lyrics-fill-npv": {
+  "title": "Liquid Lyrics Fill Now Playing Panel",
+  "description": "Makes the Liquid Lyrics card grow to fill the remaining height of the Now Playing panel instead of leaving empty space below it."
+ }
+}

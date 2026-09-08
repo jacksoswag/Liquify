@@ -1,0 +1,5 @@
+/* Fix Duplicate Playlist Metadata Dots — Spotify emits two adjacent bullet separators between the playlist owner and the song-count/duration, plus a trailing orphan bullet. This collapses them to a single separator. */
+/* second of any adjacent bullet pair */
+.main-entityHeader-metaData > span + span { display: none !important; }
+/* trailing orphan bullet after the last real item */
+.main-entityHeader-metaData > span:last-child { display: none !important; }

@@ -1,0 +1,7 @@
+/* Hide Sort By & Add Collaborator — Removes the sort dropdown and the invite-collaborators button from playlist pages. */
+.x-sortBox-sortDropdown,
+.x-sortBox-sortDropdown ~ *,
+button[aria-label^="Invite collaborators"],
+button[aria-label^="Add collaborator"] {
+  display: none !important;
+}

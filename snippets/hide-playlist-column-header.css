@@ -1,0 +1,5 @@
+/* Hide Playlist Column Header — Removes the '# / Title / Album / Date added / Time' header row above playlist tracks. */
+.main-trackList-trackListHeader,
+.main-trackList-trackListHeaderRow {
+  display: none !important;
+}

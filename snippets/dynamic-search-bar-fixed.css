@@ -1,0 +1,36 @@
+/* Dynamic Search Bar (push, not overlap) — Search/nav bar stays collapsed until hovered or focused (cmd+L), then expands and pushes the page down instead of overlapping it. Also removes the -16px root margin that left an unrendered strip at the bottom of the window. */
+/* Nav bar stays in normal flow, so expanding it PUSHES content down. */
+#global-nav-bar {
+  position: static !important;
+  width: 100% !important;
+  top: auto !important;
+  background: none;
+  z-index: 12;
+  height: 8px !important;   /* invisible hover catcher */
+  min-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: height .30s cubic-bezier(.4, 0, .2, 1),
+              opacity .22s cubic-bezier(.4, 0, .2, 1);
+}
+#global-nav-bar:hover,
+:root:has(#global-nav-bar input:focus),
+:root:has(#global-nav-bar :focus-visible) {
+  --lq-nav-open: 1;
+}
+#global-nav-bar:hover,
+:root:has(#global-nav-bar input:focus) #global-nav-bar,
+:root:has(#global-nav-bar :focus-visible) #global-nav-bar {
+  height: 64px !important;
+  opacity: 1;
+}
+.Root__globalNav .main-globalNav-navLink { background: none; }
+.main-topBar-background { background-color: #121212; }
+
+/* Undo the old snippet's compensations (these caused the bottom render gap). */
+:root { margin-top: 0 !important; }
+.Root__now-playing-bar { transform: none !important; }
+aside[aria-label="Now playing bar"] { transform: none !important; }
+.e_N7UqrrJQ0fAw9IkNAL { padding-top: 0 !important; }
+.marketplace-tabBar, .marketplace-tabBar-nav { padding-top: 8px; }
+.marketplace-header, .marketplace-header__left { padding-top: 8px; }

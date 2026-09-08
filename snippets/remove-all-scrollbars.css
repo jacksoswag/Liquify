@@ -1,0 +1,17 @@
+/* Remove All Scrollbars — Hides every scrollbar in the client (sidebar, main view, panels, lyrics) while keeping scrolling fully functional. */
+/* OverlayScrollbars (Spotify's own) */
+.os-scrollbar,
+.os-scrollbar-track,
+.os-scrollbar-handle {
+  visibility: hidden !important;
+  opacity: 0 !important;
+  width: 0 !important;
+  height: 0 !important;
+  pointer-events: none !important;
+}
+/* Native / WebKit scrollbars anywhere else */
+* { scrollbar-width: none !important; -ms-overflow-style: none !important; }
+*::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; }
+*::-webkit-scrollbar-thumb,
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner { background: transparent !important; display: none !important; }

@@ -1,0 +1,6 @@
+/* Hide Switch to Video Button — Removes the 'Switch to video' button from the Now Playing view. */
+button[aria-label="Switch to video"],
+.main-nowPlayingView-actionButton:has(> [aria-label="Switch to video"]),
+button.main-nowPlayingView-actionButton:where([aria-label*="Switch to video"]) {
+  display: none !important;
+}

@@ -1,0 +1,23 @@
+/* Liquid Lyrics Fill Now Playing Panel — Makes the Liquid Lyrics card grow to fill the remaining height of the Now Playing panel instead of leaving empty space below it. */
+/* Make the NPV a column flex container so the lyrics card can absorb slack. */
+.main-nowPlayingView-nowPlayingWidgets,
+aside[aria-label="Now playing view"] .main-nowPlayingView-content {
+  display: flex !important;
+  flex-direction: column !important;
+  min-height: 0;
+}
+.liquid-lyrics-sidebar-card,
+.liquid-lyrics-npv-card,
+[class*="liquid-lyrics"][class*="card"] {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+.liquid-lyrics-sidebar-card .liquid-lyrics-scroller,
+[class*="liquid-lyrics"][class*="scroller"],
+[class*="liquid-lyrics"][class*="lyrics-container"] {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+}

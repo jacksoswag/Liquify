@@ -1,0 +1,4 @@
+/* Hide Add / Mix / Name & Details Row — Removes the entire Add / Mix / Name & details button row under the playlist header. */
+.main-actionBar-ActionBarContainer > div:has(button[aria-label="Mix"]) {
+  display: none !important;
+}
