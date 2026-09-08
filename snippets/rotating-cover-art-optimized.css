@@ -1,0 +1,31 @@
+/* Rotating Cover Art (optimized) — Keeps the spinning vinyl in the Now Playing
+   view, where it costs nothing, and stops the playbar disc + lyrics song-card
+   vinyl, which each forced every backdrop-filter surface in the window to
+   recompute on every frame (~60 percentage points of GPU, measured). */
+
+@keyframes rotating { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+/* --- expensive spinners: stop them --- */
+.main-nowPlayingWidget-coverArt .cover-art,
+.main-nowPlayingBar-left .cover-art,
+[class*="vinyl"],
+.liquid-lyrics-song-card [class*="vinyl"] {
+  animation: none !important;
+}
+
+/* --- free spinner: keep the look --- */
+.main-nowPlayingView-coverArt .cover-art,
+.main-nowPlayingView-coverArtContainer::before,
+.main-nowPlayingView-coverArtContainer::after {
+  animation: rotating 10s linear infinite !important;
+}
+
+/* circular masking for every cover (static, no per-frame cost) */
+.cover-art,
+.main-nowPlayingView-coverArtContainer::after,
+.main-nowPlayingView-coverArtContainer::before {
+  border-radius: 50%;
+}
+.cover-art { clip-path: circle(50% at 50% 50%); }
+.main-nowPlayingBar-left button { background: transparent; }
+.main-nowPlayingView-coverArt { box-shadow: none; filter: drop-shadow(0 9px 9px rgba(0,0,0,.271)); }

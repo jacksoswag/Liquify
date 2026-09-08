@@ -1,0 +1,22 @@
+[
+ {
+  "mode": "1. ORIGINAL (what you have now)",
+  "gpuAvg": 83,
+  "gpuMax": 100
+ },
+ {
+  "mode": "2. FINAL: shared glass + scoped spin",
+  "gpuAvg": 16.3,
+  "gpuMax": 18
+ },
+ {
+  "mode": "3. FINAL + perf mode (cmd+P)",
+  "gpuAvg": 13.9,
+  "gpuMax": 16
+ },
+ {
+  "mode": "4. ORIGINAL again (drift check)",
+  "gpuAvg": 84.7,
+  "gpuMax": 100
+ }
+]

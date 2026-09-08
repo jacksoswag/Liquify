@@ -30,5 +30,9 @@
  "liquid-lyrics-fill-npv": {
   "title": "Liquid Lyrics Fill Now Playing Panel",
   "description": "Makes the Liquid Lyrics card grow to fill the remaining height of the Now Playing panel instead of leaving empty space below it."
+ },
+ "rotating-cover-art-optimized": {
+  "title": "Rotating Cover Art (Optimized)",
+  "description": "Spinning vinyl in the Now Playing view only. The playbar disc and song-card vinyl each forced every backdrop-filter surface to recompute per frame (~60pts of GPU)."
  }
 }
