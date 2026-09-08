@@ -153,7 +153,7 @@
   const DRIFT_SPEED_KEY    = 'liquify-drift-speed';      // 1-100, higher = faster
   const readNum = (k, dflt) => { const v = parseFloat(localStorage.getItem(k)); return Number.isFinite(v) ? v : dflt; };
   const driftCfg = () => ({
-    strength: Math.max(0, Math.min(100, readNum(DRIFT_STRENGTH_KEY, 55))),
+    strength: Math.max(0, Math.min(100, readNum(DRIFT_STRENGTH_KEY, 0))),
     speed:    Math.max(1, Math.min(100, readNum(DRIFT_SPEED_KEY, 65))),
   });
 
@@ -304,7 +304,9 @@
       <div style="font:600 13px/1.4 var(--liquify-font,inherit);opacity:.9;margin-bottom:10px">
         Background drift
         <div style="font:400 11px/1.4 inherit;opacity:.55;margin-top:3px">
-          Slow evolving distortion of the album background. Costs GPU; 0 disables it.
+          Slow evolving distortion of the album background. Measured at ~21 GPU
+          points at strength 55 -- more than every other optimisation here saves
+          combined, so it ships off. 0 disables it entirely.
         </div>
       </div>
       <label style="display:flex;align-items:center;gap:10px;margin:8px 0;font:400 12px/1 inherit;opacity:.85">
