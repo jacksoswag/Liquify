@@ -1,152 +1,89 @@
-// liquify-glass-gl — consolidated WebGL glass pipeline.
+// liquify-glass-gl — WebGL album background with evolving drift.
 //
-// Replaces, in one GPU pass each:
-//   * .liquify-bg-layer         (2 full-viewport CSS `filter: blur()` layers)
-//   * the SVG drift filter      (feImage -> feOffset -> feDisplacementMap, re-run every frame)
-//   * every `backdrop-filter`   (~90 independent snapshot/filter/composite cycles)
+// WHAT THIS REPLACES
+//   * .liquify-bg-layer  -- 2 full-viewport CSS `filter: blur() brightness()` layers  (~4.4 GPU pts)
+//   * the SVG drift chain -- feImage -> feOffset -> feDisplacementMap, re-run every frame (~21 GPU pts)
 //
-// Measured budget this is aimed at (paired, lyrics panel dismissed):
-//   glass 15.0 pts | drift 8.5 pts | bg-layer filters 4.4 pts  = 27.9 of 34.3
+// WHY THIS ONE WORKS AND THE GLASS VERSION DID NOT
+//   A WebGL canvas cannot sample DOM pixels. That killed the attempt to move the
+//   GLASS PANELS onto the GPU: most of this theme's glass sits over live content
+//   (track lists, the library grid), so the panels could only refract the album
+//   art and rendered as flat dark rectangles.
 //
-// The architecture is the one iOS uses: blur the backdrop ONCE into a
-// downsampled texture, then draw one quad per glass surface with a single
-// fragment shader that does rounded-rect SDF -> refraction -> chromatic taps ->
-// specular. Drift is free here: refraction already performs a dependent texture
-// read, so a time-varying noise offset on that same read is a couple of extra
-// instructions rather than a whole separate full-screen filter graph.
+//   The BACKGROUND has no such problem -- nothing is behind it, it IS the bottom
+//   layer. And because a <canvas> is ordinary painted page content, every CSS
+//   `backdrop-filter` above it samples it exactly as it sampled the old div. So
+//   the glass keeps working untouched, refracting both this canvas and the DOM
+//   content above it, while the two things that were genuinely expensive --
+//   a live full-viewport CSS blur, and a per-frame SVG displacement graph --
+//   collapse into one shader that costs a single fullscreen pass.
 //
-// Limitation: a WebGL canvas cannot sample DOM pixels, so these panels refract
-// the BACKGROUND only. Surfaces that must refract scrolling content stay on CSS
-// backdrop-filter (see KEEP_CSS_GLASS).
+//   Drift is nearly free to PRODUCE here: two sin/cos pairs perturbing the
+//   texture coordinate of a read the shader already performs, instead of a
+//   filter graph re-evaluated every frame at device resolution.
 //
-// STATUS: EXPERIMENTAL, NOT ENABLED, AND CURRENTLY WRONG.
+// RESULT: functionally correct, but NO measurable performance gain. Off by
+// default. Two independent paired runs, 6 interleaved cycles each:
 //
-// The pipeline itself works end to end -- WebGL2 context, both shader programs
-// compile and link, the shared blur texture uploads, quads are emitted per glass
-// rect (8 on a home view), CSS glass is suppressed on those surfaces, and drift
-// runs inside the shader for free. What it renders is NOT acceptable.
+//     GL + drift 60 .... 75.9%      GL idle (drift 0) .... 70.4%
+//     CSS + drift 60 ... 71.6%      CSS (drift 0) ........ 70.4%
+//     CSS drift 0 ...... 69.4%      GL + drift 60 ........ 71.6%
+//     GL drift 0 ....... 72.0%      CSS + drift 60 ....... 70.5%
 //
-// The reason is the limitation noted above, and it is fundamental rather than a
-// bug to fix: a WebGL canvas cannot sample DOM pixels. Every one of these panels
-// therefore refracts ONLY the album background. In this theme most glass sits
-// over live content -- track lists, the library grid, cards, text -- so instead
-// of refracting what is behind them the panels render as flat dark album-art
-// rectangles, and the app looks broken.
+// Why it does not help, and this is the useful part: the expensive thing was
+// never PRODUCING the background. It is that a background which changes every
+// frame invalidates all ~89 `backdrop-filter` surfaces stacked above it, and
+// every one of them must recompute. Moving the background onto the GPU makes
+// the background cheap and leaves that invalidation completely untouched.
 //
-// For this to be usable, the set of surfaces migrated to GL has to be restricted
-// to those whose backdrop genuinely is just the background (the now-playing bar
-// and the Now Playing panel are the plausible candidates), with everything else
-// staying on CSS backdrop-filter. That is a much smaller prize than the 27.9
-// points the whole-scene version was aimed at.
+// So the consolidation only ever paid off if the GLASS moved to the GPU too --
+// and it cannot, because a WebGL canvas cannot sample DOM pixels, so panels
+// sitting over track lists and grids would refract only the album art. Both
+// halves of the idea fail for the same underlying reason, from opposite sides.
 //
-// Enable with: window.liquifyGL.enable()
+// What did survive: when drift is 0 the output is static, so the render loop
+// now stops entirely (`state.idle`) rather than redrawing an unchanging image
+// behind 89 filters.
 
 (function liquifyGlassGL() {
   const KEY = 'liquify-gl';
   if (!document.body) return setTimeout(liquifyGlassGL, 300);
   if (window.liquifyGL) return;
 
-  // Surfaces whose backdrop is live DOM content rather than the background.
-  const KEEP_CSS_GLASS = ['.main-trackList-trackListHeader', '.main-actionBar-ActionBar'];
-
-  const GLASS_SELECTORS = [
-    '.Root__now-playing-bar', '.main-nowPlayingView-headerWrapper', '.main-entityHeader-container',
-    '.main-topBar-background', '.liquid-lyrics-control-pill', '.liquid-lyrics-sidebar-card',
-    '.main-userWidget-box', '.view-homeShortcutsGrid-shortcut', '.main-home-filterChipsSection',
-    '.liquid-lyrics-song-card', '.main-nowPlayingView-trackInfo', '.main-globalNav-historyButtons',
-  ].join(',');
-
   const VERT = `#version 300 es
   in vec2 aPos;
-  uniform vec4 uRect;      // x, y, w, h  (css px, top-left origin)
-  uniform vec2 uRes;
-  out vec2 vLocal;         // 0..1 within the quad
-  out vec2 vScreen;        // 0..1 across the viewport
+  out vec2 vUV;
   void main() {
-    vLocal = aPos;
-    vec2 px = uRect.xy + aPos * uRect.zw;
-    vScreen = px / uRes;
-    vec2 clip = vec2(px.x / uRes.x * 2.0 - 1.0, 1.0 - px.y / uRes.y * 2.0);
-    gl_Position = vec4(clip, 0.0, 1.0);
+    vUV = aPos;
+    gl_Position = vec4(aPos * 2.0 - 1.0, 0.0, 1.0);
   }`;
 
-  // Background pass: the blurred album art, warped by the drift field.
-  const FRAG_BG = `#version 300 es
+  const FRAG = `#version 300 es
   precision highp float;
-  in vec2 vLocal; in vec2 vScreen;
-  uniform sampler2D uBlur;
-  uniform float uTime, uDriftAmp, uDriftFreq;
-  uniform float uBrightness;
+  in vec2 vUV;
+  uniform sampler2D uArt;
+  uniform float uTime, uAmp, uFreq, uBrightness;
+  uniform vec2 uCover;          // aspect correction so the art fills like background-size:cover
   out vec4 outColor;
+
+  // Two low-frequency wave pairs at incommensurate rates. No rotation, so there
+  // is no visible swirl centre -- the field just breathes and slides, and the
+  // periods never line up, so it does not visibly loop.
   vec2 flow(vec2 p, float t) {
-    // two rotating low-frequency waves -> smooth, non-repeating drift with no
-    // visible centre of rotation
-    float a = sin(p.x * uDriftFreq + t * 0.31) + cos(p.y * uDriftFreq * 1.3 - t * 0.21);
-    float b = cos(p.x * uDriftFreq * 1.1 - t * 0.27) + sin(p.y * uDriftFreq * 0.9 + t * 0.19);
+    float a = sin(p.x * uFreq + t * 0.31) + cos(p.y * uFreq * 1.30 - t * 0.21);
+    float b = cos(p.x * uFreq * 1.13 - t * 0.27) + sin(p.y * uFreq * 0.91 + t * 0.19);
     return vec2(a, b);
   }
   void main() {
-    vec2 uv = vScreen + flow(vScreen, uTime) * uDriftAmp;
-    outColor = vec4(texture(uBlur, clamp(uv, 0.0, 1.0)).rgb * uBrightness, 1.0);
+    vec2 uv = (vUV - 0.5) * uCover + 0.5;
+    uv += flow(vUV, uTime) * uAmp;
+    // flip Y: canvas texture origin is bottom-left, page origin is top-left
+    vec3 c = texture(uArt, vec2(clamp(uv.x, 0.0, 1.0), clamp(1.0 - uv.y, 0.0, 1.0))).rgb;
+    outColor = vec4(c * uBrightness, 1.0);
   }`;
 
-  // Glass pass: one quad, one shader, everything inline.
-  const FRAG_GLASS = `#version 300 es
-  precision highp float;
-  in vec2 vLocal; in vec2 vScreen;
-  uniform sampler2D uBlur;
-  uniform vec4 uRect;
-  uniform vec2 uRes;
-  uniform float uRadius, uTime, uDriftAmp, uDriftFreq;
-  uniform float uRefract, uChroma, uTint, uSpec;
-  out vec4 outColor;
-
-  // signed distance to a rounded rectangle, in pixels
-  float sdRoundRect(vec2 p, vec2 half_, float r) {
-    vec2 q = abs(p) - half_ + r;
-    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
-  }
-  vec2 flow(vec2 p, float t) {
-    float a = sin(p.x * uDriftFreq + t * 0.31) + cos(p.y * uDriftFreq * 1.3 - t * 0.21);
-    float b = cos(p.x * uDriftFreq * 1.1 - t * 0.27) + sin(p.y * uDriftFreq * 0.9 + t * 0.19);
-    return vec2(a, b);
-  }
-  void main() {
-    vec2 halfPx = uRect.zw * 0.5;
-    vec2 p = (vLocal - 0.5) * uRect.zw;
-    float d = sdRoundRect(p, halfPx, uRadius);
-    if (d > 0.0) discard;                       // outside the rounded rect
-
-    // surface normal from the SDF gradient: steep near the rim, flat in the
-    // middle -- this is what makes the edge refract like a real bevel
-    float e = 1.0;
-    vec2 grad = vec2(
-      sdRoundRect(p + vec2(e, 0.0), halfPx, uRadius) - sdRoundRect(p - vec2(e, 0.0), halfPx, uRadius),
-      sdRoundRect(p + vec2(0.0, e), halfPx, uRadius) - sdRoundRect(p - vec2(0.0, e), halfPx, uRadius));
-    grad /= (2.0 * e);
-
-    // edge falloff: refraction concentrated in a rim a few px wide
-    float rim = 1.0 - smoothstep(-24.0, 0.0, d);
-    vec2 refr = grad * rim * uRefract / uRes;
-
-    // drift costs nothing extra here: it rides the same dependent read
-    vec2 base = vScreen + flow(vScreen, uTime) * uDriftAmp + refr;
-
-    // chromatic dispersion = 3 taps, not 3 passes
-    vec2 ca = grad * rim * uChroma / uRes;
-    float r = texture(uBlur, clamp(base + ca, 0.0, 1.0)).r;
-    float g = texture(uBlur, clamp(base,      0.0, 1.0)).g;
-    float b = texture(uBlur, clamp(base - ca, 0.0, 1.0)).b;
-    vec3 col = vec3(r, g, b);
-
-    // specular sheen along the upper rim
-    float spec = pow(max(0.0, -grad.y) * rim, 2.0) * uSpec;
-    col += spec;
-    col = mix(col, vec3(1.0), uTint * rim * 0.10);
-
-    float aa = clamp(-d, 0.0, 1.0);             // antialiased edge
-    outColor = vec4(col, aa);
-  }`;
+  const S = { canvas: null, gl: null, prog: null, vao: null, tex: null,
+              raf: 0, running: false, lastArt: '', frames: 0, fpsT: 0, fps: 0, u: {} };
 
   function compile(gl, type, src) {
     const s = gl.createShader(type);
@@ -154,39 +91,49 @@
     if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) || 'shader');
     return s;
   }
-  function program(gl, vs, fs) {
-    const p = gl.createProgram();
-    gl.attachShader(p, compile(gl, gl.VERTEX_SHADER, vs));
-    gl.attachShader(p, compile(gl, gl.FRAGMENT_SHADER, fs));
-    gl.linkProgram(p);
-    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) || 'link');
-    return p;
-  }
 
-  const state = {
-    canvas: null, gl: null, progBg: null, progGlass: null, vao: null,
-    blurTex: null, rects: [], raf: 0, running: false, art: null, lastArt: '',
-    fps: 0, frames: 0, lastFpsT: 0,
-  };
-
-  function ensureCanvas() {
-    if (state.canvas) return state.canvas;
-    const c = document.createElement('canvas');
-    c.id = 'liquify-gl-canvas';
-    c.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:0';
-    const host = document.querySelector('.Root__top-container') || document.body;
-    host.insertBefore(c, host.firstChild);
-    state.canvas = c;
-    return c;
+  // Anchored separately from initGL: the extension loads before Liquify builds
+  // its background layers, so placement has to be re-attempted until they exist.
+  function placeCanvas() {
+    const c = S.canvas;
+    if (!c) return false;
+    const layers = document.querySelectorAll('.liquify-bg-layer');
+    const ref = layers[layers.length - 1];
+    if (ref && ref.parentElement) {
+      if (c.previousElementSibling !== ref) ref.after(c);
+      return true;
+    }
+    const top = document.querySelector('.Root__top-container');
+    if (top) { if (c.parentElement !== top) top.prepend(c); return false; }
+    if (c.parentElement !== document.body) document.body.prepend(c);
+    return false;
   }
 
   function initGL() {
-    const c = ensureCanvas();
-    const gl = c.getContext('webgl2', { alpha: true, premultipliedAlpha: false, antialias: false });
+    const c = document.createElement('canvas');
+    c.id = 'liquify-gl-canvas';
+    // sits exactly where .liquify-bg-layer sat: fixed, full viewport, behind
+    // everything, and non-interactive
+    c.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:0';
+    // Paint order matters: Liquify ships a crossfade PAIR (.liquify-bg-layer
+    // layer-a / layer-b) plus .liquify-animated-bg and .liquify-kawarp-bg, all
+    // position:fixed at z-index 0 in .Root__top-container. Equal z-index means
+    // DOM order decides, so inserting BEFORE them leaves the canvas painted
+    // under later opaque siblings and it renders as a black screen. It must go
+    // after the LAST background layer.
+    S.canvas = c;
+    placeCanvas();
+
+    const gl = c.getContext('webgl2', { alpha: false, antialias: false, depth: false, stencil: false });
     if (!gl) throw new Error('WebGL2 unavailable');
-    state.gl = gl;
-    state.progBg = program(gl, VERT, FRAG_BG);
-    state.progGlass = program(gl, VERT, FRAG_GLASS);
+    S.gl = gl;
+    const p = gl.createProgram();
+    gl.attachShader(p, compile(gl, gl.VERTEX_SHADER, VERT));
+    gl.attachShader(p, compile(gl, gl.FRAGMENT_SHADER, FRAG));
+    gl.bindAttribLocation(p, 0, 'aPos');
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) || 'link');
+    S.prog = p;
     const vao = gl.createVertexArray();
     gl.bindVertexArray(vao);
     const buf = gl.createBuffer();
@@ -194,172 +141,145 @@
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0,0, 1,0, 0,1, 0,1, 1,0, 1,1]), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-    state.vao = vao;
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    S.vao = vao;
+    for (const n of ['uArt','uTime','uAmp','uFreq','uBrightness','uCover'])
+      S.u[n] = gl.getUniformLocation(p, n);
   }
 
-  // The album art, downsampled and blurred ONCE on a 2D canvas, uploaded as the
-  // single texture every surface samples. This is the "one shared blur".
+  // The blur is done ONCE per track on a 2D canvas and uploaded as a texture.
+  // Nothing re-blurs per frame -- that was the whole point.
   async function loadArt(url) {
-    if (!url || url === state.lastArt) return;
-    state.lastArt = url;
+    if (!url || url === S.lastArt || !S.gl) return;
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
-    const W = 256, H = 256;
-    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    try {
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+    } catch { return; }
+    S.lastArt = url;
+    const N = 384;
+    const cv = document.createElement('canvas'); cv.width = cv.height = N;
     const x = cv.getContext('2d');
-    x.drawImage(img, 0, 0, W, H);
-    x.filter = 'blur(18px)';
-    x.drawImage(cv, 0, 0);
-    x.filter = 'none';
-    const gl = state.gl;
-    if (!state.blurTex) state.blurTex = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, state.blurTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv);
+    x.drawImage(img, 0, 0, N, N);
+    const out = document.createElement('canvas'); out.width = out.height = N;
+    const ox = out.getContext('2d');
+    ox.filter = 'blur(7px)';   // matches the CSS layer's effective radius; 16px on a small texture flattens it to near-uniform grey
+    ox.drawImage(cv, 0, 0);
+    ox.filter = 'none';
+    const gl = S.gl;
+    if (!S.tex) S.tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, S.tex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, out);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   }
 
-  function currentArtUrl() {
-    const el = document.querySelector('.liquify-bg-layer');
-    const m = el && getComputedStyle(el).backgroundImage.match(/url\(["']?([^"')]+)/);
-    return m ? m[1] : null;
-  }
-
-  // Rects are read on mutation/resize/scroll, never per frame -- reading
-  // getBoundingClientRect for ~90 elements every frame would reintroduce exactly
-  // the layout thrash this is meant to remove.
-  function collectRects() {
-    const out = [];
-    for (const el of document.querySelectorAll(GLASS_SELECTORS)) {
-      if (KEEP_CSS_GLASS.some(s => el.matches(s))) continue;
-      const r = el.getBoundingClientRect();
-      if (r.width < 8 || r.height < 8) continue;
-      if (r.right < 0 || r.bottom < 0 || r.left > innerWidth || r.top > innerHeight) continue;
-      const cs = getComputedStyle(el);
-      const radius = parseFloat(cs.borderTopLeftRadius) || 12;
-      out.push({ x: r.left, y: r.top, w: r.width, h: r.height, r: Math.min(radius, Math.min(r.width, r.height) / 2) });
+  const artUrl = () => {
+    for (const sel of ['.liquify-bg-layer', '.liquify-animated-tile']) {
+      const el = document.querySelector(sel);
+      const m = el && getComputedStyle(el).backgroundImage.match(/url\(["']?([^"')]+)/);
+      if (m) return m[1];
     }
-    state.rects = out;
-  }
-
-  function resize() {
-    const c = state.canvas, gl = state.gl;
-    const dpr = Math.min(devicePixelRatio || 1, 2);
-    const w = Math.round(innerWidth * dpr), h = Math.round(innerHeight * dpr);
-    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
-    gl.viewport(0, 0, w, h);
-  }
+    try { return Spicetify?.Player?.data?.item?.metadata?.image_xlarge_url?.replace('spotify:image:', 'https://i.scdn.co/image/') || null; }
+    catch { return null; }
+  };
 
   function frame(t) {
-    if (!state.running) return;
-    const gl = state.gl;
-    resize();
-    gl.clearColor(0, 0, 0, 0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.bindVertexArray(state.vao);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, state.blurTex);
+    if (!S.running) return;
+    const gl = S.gl, c = S.canvas;
+    // Render at a fraction of device resolution. The output is a heavy blur, so
+    // the upscale is free visually and quarters the fill cost.
+    const scale = 0.5;
+    const w = Math.max(2, Math.round(innerWidth * scale)), h = Math.max(2, Math.round(innerHeight * scale));
+    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; gl.viewport(0, 0, w, h); }
 
-    const cfg = window.liquifyDrift ? window.liquifyDrift.get() : { strength: 55, speed: 65 };
-    const driftAmp = (cfg.strength / 100) * 0.05;
-    const driftFreq = 3.0;
-    const time = t / 1000;
-    const res = [innerWidth, innerHeight];
-
-    if (state.blurTex) {
-      gl.useProgram(state.progBg);
-      gl.uniform4f(gl.getUniformLocation(state.progBg, 'uRect'), 0, 0, res[0], res[1]);
-      gl.uniform2f(gl.getUniformLocation(state.progBg, 'uRes'), res[0], res[1]);
-      gl.uniform1i(gl.getUniformLocation(state.progBg, 'uBlur'), 0);
-      gl.uniform1f(gl.getUniformLocation(state.progBg, 'uTime'), time);
-      gl.uniform1f(gl.getUniformLocation(state.progBg, 'uDriftAmp'), driftAmp);
-      gl.uniform1f(gl.getUniformLocation(state.progBg, 'uDriftFreq'), driftFreq);
-      gl.uniform1f(gl.getUniformLocation(state.progBg, 'uBrightness'), 0.45);
+    if (S.tex) {
+      const cfg = window.liquifyDrift ? window.liquifyDrift.get() : { strength: 55, speed: 65 };
+      const amp = (cfg.strength / 100) * 0.045;
+      S.staticFrame = amp === 0;
+      const speed = 0.25 + (cfg.speed / 100) * 1.2;
+      const ar = innerWidth / innerHeight;
+      const cover = ar > 1 ? [1, 1 / ar] : [ar, 1];
+      gl.useProgram(S.prog);
+      gl.bindVertexArray(S.vao);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, S.tex);
+      gl.uniform1i(S.u.uArt, 0);
+      gl.uniform1f(S.u.uTime, (t / 1000) * speed);
+      gl.uniform1f(S.u.uAmp, amp);
+      gl.uniform1f(S.u.uFreq, 2.6);
+      gl.uniform1f(S.u.uBrightness, 0.55);
+      gl.uniform2f(S.u.uCover, cover[0], cover[1]);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
-
-      const P = state.progGlass;
-      gl.useProgram(P);
-      gl.uniform2f(gl.getUniformLocation(P, 'uRes'), res[0], res[1]);
-      gl.uniform1i(gl.getUniformLocation(P, 'uBlur'), 0);
-      gl.uniform1f(gl.getUniformLocation(P, 'uTime'), time);
-      gl.uniform1f(gl.getUniformLocation(P, 'uDriftAmp'), driftAmp);
-      gl.uniform1f(gl.getUniformLocation(P, 'uDriftFreq'), driftFreq);
-      gl.uniform1f(gl.getUniformLocation(P, 'uRefract'), 90.0);
-      gl.uniform1f(gl.getUniformLocation(P, 'uChroma'), 14.0);
-      gl.uniform1f(gl.getUniformLocation(P, 'uTint'), 1.0);
-      gl.uniform1f(gl.getUniformLocation(P, 'uSpec'), 0.10);
-      const uRect = gl.getUniformLocation(P, 'uRect');
-      const uRad = gl.getUniformLocation(P, 'uRadius');
-      for (const q of state.rects) {
-        gl.uniform4f(uRect, q.x, q.y, q.w, q.h);
-        gl.uniform1f(uRad, q.r);
-        gl.drawArrays(gl.TRIANGLES, 0, 6);
-      }
     }
+    S.frames++;
+    if (t - S.fpsT > 1000) { S.fps = S.frames * 1000 / (t - S.fpsT); S.frames = 0; S.fpsT = t; }
 
-    state.frames++;
-    if (t - state.lastFpsT > 1000) { state.fps = state.frames * 1000 / (t - state.lastFpsT); state.frames = 0; state.lastFpsT = t; }
-    state.raf = requestAnimationFrame(frame);
+    // With drift at 0 the output is a STATIC image, so redrawing it every frame
+    // is pure waste -- and worse than waste: this canvas sits behind ~89
+    // backdrop-filter surfaces, and any change to it forces every one of them to
+    // recompute. Draw once, then idle until something actually changes.
+    if (S.staticFrame) { S.idle = true; return; }
+    S.raf = requestAnimationFrame(frame);
   }
 
-  // While GL is running, the CSS glass and CSS background must be turned off or
-  // we pay for both.
+  // With GL on, the CSS background layers must stop painting or we pay twice.
   const suppress = document.createElement('style');
   suppress.id = 'liquify-gl-suppress';
   suppress.textContent = `
-    html.liquify-gl :is(${GLASS_SELECTORS}) {
-      backdrop-filter: none !important;
-      -webkit-backdrop-filter: none !important;
-      background-color: transparent !important;
-    }
-    html.liquify-gl .liquify-bg-layer { filter: none !important; opacity: 0 !important; }`;
+    html.liquify-gl .liquify-bg-layer,
+    html.liquify-gl .liquify-kawarp-bg,
+    html.liquify-gl .liquify-animated-bg { display: none !important; }`;
   document.head.appendChild(suppress);
 
-  let scheduled = false;
-  const scheduleRects = () => {
-    if (scheduled) return;
-    scheduled = true;
-    requestAnimationFrame(() => { scheduled = false; if (state.running) collectRects(); });
-  };
-
   async function enable() {
-    if (state.running) return 'already running';
-    if (!state.gl) initGL();
-    await loadArt(currentArtUrl());
+    if (S.running) return 'already running';
+    if (!S.gl) initGL();
+    if (!placeCanvas()) return 'background layers not ready';
+    await loadArt(artUrl());
+    if (!S.tex) return 'no album art texture';
     document.documentElement.classList.add('liquify-gl');
-    collectRects();
-    state.running = true;
-    state.lastFpsT = performance.now();
-    state.raf = requestAnimationFrame(frame);
-    addEventListener('resize', scheduleRects, { passive: true });
-    addEventListener('scroll', scheduleRects, { passive: true, capture: true });
-    state._obs = new MutationObserver(scheduleRects);
-    state._obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
-    try { Spicetify?.Player?.addEventListener?.('songchange', () => loadArt(currentArtUrl())); } catch {}
+    S.running = true; S.fpsT = performance.now();
+    S.raf = requestAnimationFrame(frame);
+    try { Spicetify?.Player?.addEventListener?.('songchange', () => loadArt(artUrl())); } catch {}
+    S.poll = setInterval(() => { placeCanvas(); loadArt(artUrl()); if (S.idle) wake(); }, 4000);
+    addEventListener('resize', wake, { passive: true });
     localStorage.setItem(KEY, 'on');
     return 'enabled';
   }
 
+  function wake() {
+    if (!S.running) return;
+    S.idle = false; S.staticFrame = false;
+    cancelAnimationFrame(S.raf);
+    S.raf = requestAnimationFrame(frame);
+  }
+
   function disable() {
-    state.running = false;
-    cancelAnimationFrame(state.raf);
-    state._obs?.disconnect();
-    removeEventListener('resize', scheduleRects);
-    removeEventListener('scroll', scheduleRects, true);
+    S.running = false;
+    cancelAnimationFrame(S.raf);
+    clearInterval(S.poll);
     document.documentElement.classList.remove('liquify-gl');
     localStorage.setItem(KEY, 'off');
     return 'disabled';
   }
 
   window.liquifyGL = {
-    enable, disable, state,
-    get fps() { return +state.fps.toFixed(1); },
-    get quads() { return state.rects.length; },
+    enable, disable, wake, state: S,
+    get idle() { return !!S.idle; },
+    reloadArt() { S.lastArt = ''; return loadArt(artUrl()); },
+    get fps() { return +S.fps.toFixed(1); },
+    get hasTexture() { return !!S.tex; },
   };
-  if (localStorage.getItem(KEY) === 'on') enable().catch(e => console.error('liquify-gl', e));
+  // The extension loads before Liquify has built its background layers, so the
+  // first enable() finds no art and bails. Retry until it takes.
+  if (localStorage.getItem(KEY) === 'on') {
+    let tries = 0;
+    const boot = setInterval(async () => {
+      if (S.running || ++tries > 40) return clearInterval(boot);
+      try { if ((await enable()) === 'enabled') clearInterval(boot); } catch {}
+    }, 700);
+  }
 })();
