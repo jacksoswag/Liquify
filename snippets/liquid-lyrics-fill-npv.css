@@ -1,22 +1,30 @@
 /* Liquid Lyrics Fill Now Playing Panel — Makes the Liquid Lyrics card grow to fill the remaining height of the Now Playing panel instead of leaving empty space below it. */
-/* Make the NPV a column flex container so the lyrics card can absorb slack. */
+
+/* DO NOT use [class*="liquid-lyrics"][class*="card"] here.
+   The MAIN-VIEW panel carries the class `ll-card-center-text`, so that wildcard
+   also matches `.liquid-lyrics-panel`. Liquid Lyrics hides that panel with
+   `.liquid-lyrics-panel { display: none }` when it is dismissed, so an
+   `!important` display on the wildcard overrides it and pins the lyrics panel
+   permanently open on top of .Root__main-view -- making playlists, albums and
+   everything else in the main view unreachable.
+   Only ever target the sidebar card explicitly, and never set `display`. */
+
 .main-nowPlayingView-nowPlayingWidgets,
 aside[aria-label="Now playing view"] .main-nowPlayingView-content {
-  display: flex !important;
-  flex-direction: column !important;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
 }
-.liquid-lyrics-sidebar-card,
-.liquid-lyrics-npv-card,
-[class*="liquid-lyrics"][class*="card"] {
+
+/* the Now Playing sidebar card absorbs the leftover height */
+.liquid-lyrics-sidebar-card {
   flex: 1 1 auto !important;
   min-height: 0 !important;
-  display: flex !important;
-  flex-direction: column !important;
 }
-.liquid-lyrics-sidebar-card .liquid-lyrics-scroller,
-[class*="liquid-lyrics"][class*="scroller"],
-[class*="liquid-lyrics"][class*="lyrics-container"] {
+
+/* and its scroller fills the card */
+.liquid-lyrics-sidebar-card .ll-sidebar-mini-viewport,
+.liquid-lyrics-sidebar-card .ll-sidebar-mini-lines {
   flex: 1 1 auto !important;
   min-height: 0 !important;
   max-height: none !important;
