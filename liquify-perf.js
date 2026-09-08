@@ -153,8 +153,8 @@
   const DRIFT_SPEED_KEY    = 'liquify-drift-speed';      // 1-100, higher = faster
   const readNum = (k, dflt) => { const v = parseFloat(localStorage.getItem(k)); return Number.isFinite(v) ? v : dflt; };
   const driftCfg = () => ({
-    strength: Math.max(0, Math.min(100, readNum(DRIFT_STRENGTH_KEY, 0))),
-    speed:    Math.max(1, Math.min(100, readNum(DRIFT_SPEED_KEY, 35))),
+    strength: Math.max(0, Math.min(100, readNum(DRIFT_STRENGTH_KEY, 55))),
+    speed:    Math.max(1, Math.min(100, readNum(DRIFT_SPEED_KEY, 65))),
   });
 
   const DRIFT_ID = ID + '-drift';
