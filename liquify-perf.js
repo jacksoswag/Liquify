@@ -82,6 +82,122 @@
   const map = rasterMap(400, 200, 20, 0.035, 2);
   defs.appendChild(buildFilter(ID + '-hi', { scale: -80, chroma: true,  href: map, post: 0.2 }));
   defs.appendChild(buildFilter(ID + '-lo', { scale: -80, chroma: false, href: map, post: 0 }));
+
+  // ---- evolving "drift" distortion on the album background ----
+  //
+  // A slow, non-repeating global warp, in the spirit of the Drift screensaver:
+  // no visible swirl centre, just the whole image breathing.
+  //
+  // Why this is affordable when the theme's other filters were not: the
+  // background layer is now rendered into a ~317x231 backing store (see below),
+  // so the displacement pass covers ~73k px, not the 1.17M px it used to. And
+  // crucially the noise field is a STATIC raster - generated once here - that is
+  // merely *translated* by an animated feOffset. Translating a cached texture is
+  // nearly free, whereas animating feTurbulence's baseFrequency would re-evaluate
+  // procedural noise per pixel per frame, which is exactly the kind of work that
+  // made the original theme expensive.
+  //
+  // Two feOffset animations with coprime-ish periods (47s / 61s) means the pair
+  // does not revisit the same offset for ~48 minutes, so it never visibly loops.
+
+  // Displacement offset is `scale * (channel/255 - 0.5)`. Blurring random noise
+  // pulls every channel toward the 128 mid-point, i.e. toward ZERO displacement
+  // -- the first version of this was invisible for exactly that reason. So after
+  // smoothing we contrast-stretch each channel back to the full 0..255 range,
+  // which restores amplitude while keeping the field smooth.
+  function noiseTexture(size, cell, blurPx) {
+    const small = document.createElement('canvas');
+    small.width = small.height = cell;
+    const sx = small.getContext('2d');
+    const img = sx.createImageData(cell, cell);
+    for (let i = 0; i < cell * cell; i++) {
+      img.data[i * 4 + 0] = Math.random() * 255;   // R -> x displacement
+      img.data[i * 4 + 1] = Math.random() * 255;   // G -> y displacement
+      img.data[i * 4 + 2] = 128;
+      img.data[i * 4 + 3] = 255;
+    }
+    sx.putImageData(img, 0, 0);
+    const mid = document.createElement('canvas');
+    mid.width = mid.height = size;
+    const mx = mid.getContext('2d');
+    mx.imageSmoothingEnabled = true;
+    mx.imageSmoothingQuality = 'high';
+    mx.drawImage(small, 0, 0, size, size);
+    const out = document.createElement('canvas');
+    out.width = out.height = size;
+    const ox = out.getContext('2d');
+    if (blurPx > 0) ox.filter = `blur(${blurPx}px)`;
+    ox.drawImage(mid, 0, 0);
+    ox.filter = 'none';
+    const d = ox.getImageData(0, 0, size, size);
+    let lo = [255, 255], hi = [0, 0];
+    for (let i = 0; i < d.data.length; i += 4)
+      for (let c = 0; c < 2; c++) {
+        const v = d.data[i + c];
+        if (v < lo[c]) lo[c] = v;
+        if (v > hi[c]) hi[c] = v;
+      }
+    for (let i = 0; i < d.data.length; i += 4)
+      for (let c = 0; c < 2; c++) {
+        const span = Math.max(1, hi[c] - lo[c]);
+        d.data[i + c] = Math.max(0, Math.min(255, ((d.data[i + c] - lo[c]) / span) * 255));
+      }
+    ox.putImageData(d, 0, 0);
+    return out.toDataURL('image/png');
+  }
+
+  // ---- drift settings (persisted; also exposed in Liquify's settings panel) ----
+  const DRIFT_STRENGTH_KEY = 'liquify-drift-strength';   // 0-100, 0 = off
+  const DRIFT_SPEED_KEY    = 'liquify-drift-speed';      // 1-100, higher = faster
+  const readNum = (k, dflt) => { const v = parseFloat(localStorage.getItem(k)); return Number.isFinite(v) ? v : dflt; };
+  const driftCfg = () => ({
+    strength: Math.max(0, Math.min(100, readNum(DRIFT_STRENGTH_KEY, 45))),
+    speed:    Math.max(1, Math.min(100, readNum(DRIFT_SPEED_KEY, 35))),
+  });
+
+  const DRIFT_ID = ID + '-drift';
+  const NOISE_HREF = noiseTexture(320, 9, 3);
+
+  function buildDriftFilter() {
+    const { strength, speed } = driftCfg();
+    // The layer is drawn at 1/BG_SCALE and scaled back up, so displacement in
+    // this space is multiplied by BG_SCALE on screen. strength 100 ~ 100px.
+    const scale = (strength / 100) * (100 / 4);
+    const base = 150 - speed;            // seconds; two coprime-ish periods
+    const f = fe('filter', { id: DRIFT_ID, 'color-interpolation-filters': 'sRGB',
+                             x: '-15%', y: '-15%', width: '130%', height: '130%' });
+    const img = fe('feImage', { x: '-15%', y: '-15%', width: '130%', height: '130%',
+                                preserveAspectRatio: 'none', result: 'noise' });
+    img.setAttribute('href', NOISE_HREF);
+    img.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', NOISE_HREF);
+    f.appendChild(img);
+    const off = fe('feOffset', { in: 'noise', dx: '0', dy: '0', result: 'drift' });
+    const anim = (attr, values, dur) => {
+      const a = document.createElementNS(NS, 'animate');
+      a.setAttribute('attributeName', attr);
+      a.setAttribute('values', values);
+      a.setAttribute('dur', dur + 's');
+      a.setAttribute('repeatCount', 'indefinite');
+      a.setAttribute('calcMode', 'spline');
+      a.setAttribute('keyTimes', '0;0.33;0.66;1');
+      a.setAttribute('keySplines', '.45 0 .55 1;.45 0 .55 1;.45 0 .55 1');
+      return a;
+    };
+    off.appendChild(anim('dx', '0;26;-21;0', Math.round(base * 0.78)));
+    off.appendChild(anim('dy', '0;-19;24;0', Math.round(base)));
+    f.appendChild(off);
+    f.appendChild(fe('feDisplacementMap', { in: 'SourceGraphic', in2: 'drift',
+      scale: String(scale.toFixed(1)), xChannelSelector: 'R', yChannelSelector: 'G' }));
+    return f;
+  }
+  defs.appendChild(buildDriftFilter());
+
+  function rebuildDrift() {
+    document.getElementById(DRIFT_ID)?.remove();
+    defs.appendChild(buildDriftFilter());
+    applyBgStyle();
+  }
+
   host.appendChild(defs);
   document.body.appendChild(host);
 
@@ -119,23 +235,113 @@
   const BG_SCALE = 4;
   const bgStyle = document.createElement('style');
   bgStyle.id = ID + '-bg';
-  bgStyle.textContent = `
-    .liquify-bg-layer {
-      width: ${100 / BG_SCALE}vw !important;
-      height: ${100 / BG_SCALE}vh !important;
-      right: auto !important;
-      bottom: auto !important;
-      transform: scale(${BG_SCALE}) !important;
-      transform-origin: 0 0 !important;
-      filter: blur(${(7 / BG_SCALE).toFixed(2)}px) brightness(0.45) !important;
-    }
-    html.liquify-perf .liquify-bg-layer {
-      width: ${100 / (BG_SCALE * 2)}vw !important;
-      height: ${100 / (BG_SCALE * 2)}vh !important;
-      transform: scale(${BG_SCALE * 2}) !important;
-      filter: blur(${(7 / (BG_SCALE * 2)).toFixed(2)}px) brightness(0.45) !important;
-    }`;
   document.head.appendChild(bgStyle);
+  function applyBgStyle() {
+    const on = driftCfg().strength > 0;
+    // 27vw/27vh (not 25) gives overscan so drift never pulls transparent pixels
+    // in from outside the layer's own bounds.
+    bgStyle.textContent = `
+      .liquify-bg-layer {
+        left: -1vw !important;
+        top: -1vh !important;
+        width: ${(100 / BG_SCALE) + 2}vw !important;
+        height: ${(100 / BG_SCALE) + 2}vh !important;
+        right: auto !important;
+        bottom: auto !important;
+        transform: scale(${BG_SCALE}) !important;
+        transform-origin: 0 0 !important;
+        filter: ${on ? `url(#${DRIFT_ID}) ` : ''}blur(${(7 / BG_SCALE).toFixed(2)}px) brightness(0.45) !important;
+      }
+      html.liquify-perf .liquify-bg-layer {
+        width: ${(100 / (BG_SCALE * 2)) + 2}vw !important;
+        height: ${(100 / (BG_SCALE * 2)) + 2}vh !important;
+        transform: scale(${BG_SCALE * 2}) !important;
+        filter: blur(${(7 / (BG_SCALE * 2)).toFixed(2)}px) brightness(0.45) !important;
+      }`;
+  }
+  applyBgStyle();
+
+  // ---- shadows ----
+  //
+  // Measured against a no-glass baseline: box-shadow ~6 GPU points, text-shadow
+  // ~3. Large soft shadows are blur passes in disguise -- each one is a
+  // separate rasterization of a blurred alpha mask, and Liquify puts one on
+  // essentially every panel. Dropped at the user's request.
+  const shadowStyle = document.createElement('style');
+  shadowStyle.id = ID + '-shadows';
+  shadowStyle.textContent = `
+    *, *::before, *::after { box-shadow: none !important; text-shadow: none !important; }
+    /* keep the cover-art drop shadow: it is a single small element and it is
+       what gives the floating card its depth */
+    .main-nowPlayingView-coverArt, .liquid-lyrics-song-card {
+      filter: drop-shadow(0 9px 9px rgba(0,0,0,.271)) !important;
+    }`;
+  document.head.appendChild(shadowStyle);
+
+
+  // ---- drift controls in Liquify's settings panel ----
+  //
+  // Liquify's settings UI is minified and exposes no extension point, so this
+  // appends a small section of its own when the panel opens, reusing the
+  // panel's classes so it matches. Values persist in localStorage and rebuild
+  // the filter live.
+  const SETTINGS_MARK = 'data-lqx-drift-ui';
+  function buildDriftUI(panel) {
+    if (panel.querySelector(`[${SETTINGS_MARK}]`)) return;
+    const cfg = driftCfg();
+    const wrap = document.createElement('div');
+    wrap.setAttribute(SETTINGS_MARK, '1');
+    wrap.style.cssText = 'padding:14px 4px 4px;border-top:1px solid rgba(255,255,255,.12);margin-top:14px';
+    wrap.innerHTML = `
+      <div style="font:600 13px/1.4 var(--liquify-font,inherit);opacity:.9;margin-bottom:10px">
+        Background drift
+        <div style="font:400 11px/1.4 inherit;opacity:.55;margin-top:3px">
+          Slow evolving distortion of the album background. Costs GPU; 0 disables it.
+        </div>
+      </div>
+      <label style="display:flex;align-items:center;gap:10px;margin:8px 0;font:400 12px/1 inherit;opacity:.85">
+        <span style="min-width:62px">Strength</span>
+        <input type="range" min="0" max="100" step="1" value="${cfg.strength}" data-lqx="strength" style="flex:1">
+        <span data-lqx-out="strength" style="min-width:28px;text-align:right;opacity:.7">${cfg.strength}</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:10px;margin:8px 0;font:400 12px/1 inherit;opacity:.85">
+        <span style="min-width:62px">Speed</span>
+        <input type="range" min="1" max="100" step="1" value="${cfg.speed}" data-lqx="speed" style="flex:1">
+        <span data-lqx-out="speed" style="min-width:28px;text-align:right;opacity:.7">${cfg.speed}</span>
+      </label>`;
+    panel.appendChild(wrap);
+    for (const input of wrap.querySelectorAll('input[data-lqx]')) {
+      input.addEventListener('input', () => {
+        const which = input.getAttribute('data-lqx');
+        wrap.querySelector(`[data-lqx-out="${which}"]`).textContent = input.value;
+        localStorage.setItem(which === 'strength' ? DRIFT_STRENGTH_KEY : DRIFT_SPEED_KEY, input.value);
+        rebuildDrift();
+      });
+    }
+  }
+  function tryInjectDriftUI() {
+    const overlay = document.getElementById('liquify-settings-react-overlay');
+    if (!overlay || !overlay.offsetParent) return;
+    const panel = overlay.querySelector('.liquifySettingsPanel');
+    if (!panel) return;
+    // append into the panel's scrolling body if it has one, else the panel
+    const body = [...panel.children].find(c => /auto|scroll/.test(getComputedStyle(c).overflowY)) || panel;
+    buildDriftUI(body);
+  }
+  // React re-renders the panel and will drop the injected node; the observer
+  // simply puts it back.
+  new MutationObserver(tryInjectDriftUI).observe(document.body, { childList: true, subtree: true });
+  setInterval(tryInjectDriftUI, 1200);
+
+  window.liquifyDrift = {
+    get: driftCfg,
+    set(strength, speed) {
+      if (strength != null) localStorage.setItem(DRIFT_STRENGTH_KEY, String(strength));
+      if (speed != null) localStorage.setItem(DRIFT_SPEED_KEY, String(speed));
+      rebuildDrift();
+      return driftCfg();
+    },
+  };
 
   // ---- perf mode: cmd+P / ctrl+P ----
   const setPerf = (on) => {
