@@ -147,11 +147,13 @@
   }
 
   // ---- drift settings (persisted; also exposed in Liquify's settings panel) ----
+  const CHROMA_KEY = 'liquify-glass-chromatic';          // 'on' | 'off'
+  const chromaOn = () => localStorage.getItem(CHROMA_KEY) === 'on';
   const DRIFT_STRENGTH_KEY = 'liquify-drift-strength';   // 0-100, 0 = off
   const DRIFT_SPEED_KEY    = 'liquify-drift-speed';      // 1-100, higher = faster
   const readNum = (k, dflt) => { const v = parseFloat(localStorage.getItem(k)); return Number.isFinite(v) ? v : dflt; };
   const driftCfg = () => ({
-    strength: Math.max(0, Math.min(100, readNum(DRIFT_STRENGTH_KEY, 45))),
+    strength: Math.max(0, Math.min(100, readNum(DRIFT_STRENGTH_KEY, 0))),
     speed:    Math.max(1, Math.min(100, readNum(DRIFT_SPEED_KEY, 35))),
   });
 
@@ -210,12 +212,18 @@
 
   const style = document.createElement('style');
   style.id = ID + '-style';
-  // `[data-liquify]` beats Liquify's own per-instance rules, which are appended
-  // to <head> as each GlassSurface is constructed.
-  style.textContent =
-    `:root, html [data-liquify]{--glass-filter:url(#${ID}-hi) !important;--liquify-filter:url(#${ID}-hi) !important;}` +
-    `html [data-liquify]:is(${SMALL}), html :is(${SMALL}){--glass-filter:url(#${ID}-lo) !important;--liquify-filter:url(#${ID}-lo) !important;}`;
   document.head.appendChild(style);
+  function applyGlassStyle() {
+    // Measured, paired, 6 cycles with drift off: the 3-pass chromatic chain
+    // costs 32 GPU points (77.2% -> 44.8%) for an RGB fringe that is sub-pixel
+    // at blur(2px). Single-pass keeps the refraction/warping identical, so it
+    // is the default; chromatic is opt-in.
+    const hi = chromaOn() ? ID + '-hi' : ID + '-lo';
+    style.textContent =
+      `:root, html [data-liquify]{--glass-filter:url(#${hi}) !important;--liquify-filter:url(#${hi}) !important;}` +
+      `html [data-liquify]:is(${SMALL}), html :is(${SMALL}){--glass-filter:url(#${ID}-lo) !important;--liquify-filter:url(#${ID}-lo) !important;}`;
+  }
+  applyGlassStyle();
 
 
   // ---- low-resolution album background ----
@@ -309,6 +317,24 @@
         <input type="range" min="1" max="100" step="1" value="${cfg.speed}" data-lqx="speed" style="flex:1">
         <span data-lqx-out="speed" style="min-width:28px;text-align:right;opacity:.7">${cfg.speed}</span>
       </label>`;
+    const chroma = document.createElement('div');
+    chroma.style.cssText = 'margin-top:14px';
+    chroma.innerHTML = `
+      <div style="font:600 13px/1.4 inherit;opacity:.9;margin-bottom:4px">Chromatic aberration
+        <div style="font:400 11px/1.4 inherit;opacity:.55;margin-top:3px">
+          RGB fringing on the glass edges. Measured at ~32 GPU points; the warping
+          refraction is unaffected either way.
+        </div>
+      </div>
+      <label style="display:flex;align-items:center;gap:10px;margin:8px 0;font:400 12px/1 inherit;opacity:.85">
+        <input type="checkbox" data-lqx-chroma ${chromaOn() ? 'checked' : ''}>
+        <span>Enable (costs GPU)</span>
+      </label>`;
+    wrap.appendChild(chroma);
+    chroma.querySelector('[data-lqx-chroma]').addEventListener('change', (e) => {
+      localStorage.setItem(CHROMA_KEY, e.target.checked ? 'on' : 'off');
+      applyGlassStyle();
+    });
     panel.appendChild(wrap);
     for (const input of wrap.querySelectorAll('input[data-lqx]')) {
       input.addEventListener('input', () => {

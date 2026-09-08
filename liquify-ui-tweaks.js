@@ -49,82 +49,84 @@
 
   // ---- Liquid Lyrics main-panel desync repair ----
   //
-  // The main-view lyrics panel is constructed once and appended to
-  // .Root__main-view; its renderer is module-local and never subscribes to
-  // Spicetify's "songchange" (the sidebar instance does, which is why the
-  // sidebar stays correct while the main panel does not). Two failure modes,
-  // both verified with this repair disabled and with all of this setup's CSS
-  // removed, so neither is caused by the theme:
+  // Liquid Lyrics' main panel is appended INSIDE .Root__main-view, so while it
+  // is showing it covers the whole main view. Its renderer never subscribes to
+  // "songchange" (the sidebar instance does, which is why the sidebar stays
+  // correct), so the panel keeps rendering the PREVIOUS track until remounted.
   //
-  //   blank  - panel mounts without ever getting a frame (launched occluded /
-  //            on another Space); the virtualizer measures an empty visible
-  //            range and renders 0 lines, forever.
-  //   stale  - panel keeps rendering the PREVIOUS track. Measured: playing
-  //            "Here Comes Your Man" while the card still read "See You Again".
+  // Detecting whether the panel is actually showing is the load-bearing detail,
+  // and an earlier version got it wrong with real consequences. The panel keeps
+  // offsetParent / display / opacity / visibility IDENTICAL in both states:
   //
-  // Remounting the panel fixes both. There is no exposed API to re-render it,
-  // so the remount goes through the panel's own toggle button; two clicks land
-  // back on the state the user was in.
+  //   dismissed -> position: relative, z-index: auto,  no "visible" class
+  //   showing   -> position: absolute, z-index: 100,   has "visible" class
+  //
+  // Guarding on offsetParent was therefore always true, so the repair clicked
+  // the toggle while the panel was dismissed -- re-opening it over the main view
+  // and making playlists and albums unreachable. Only the "visible" class is a
+  // valid signal, and the repair now refuses to run without it, re-checks it
+  // between the two clicks, and restores it afterwards if anything drifted.
 
-  const LL = { busy: false, attempts: 0, streak: 0, track: null, MAX: 3 };
+  const LL = { busy: false, track: null, attempts: 0, MAX: 2 };
+  const LL_OFF_KEY = 'liquify-lyrics-autorepair';           // 'off' disables
 
+  const llPanel = () => document.querySelector('.liquid-lyrics-panel');
+  const llShowing = () => !!llPanel()?.classList.contains('visible');
+  const llToggle = () => [...document.querySelectorAll('button')]
+    .find(b => b.getAttribute('aria-label') === 'Liquid Lyrics');
   const llShownTitle = () =>
     document.querySelector('.ll-song-card-title')?.textContent?.trim() || null;
   const llActualTitle = () => {
     try { return Spicetify?.Player?.data?.item?.name || null; } catch { return null; }
   };
 
-  function lyricsPanelDesynced() {
-    if (window.__llNoRepair) return false;
-    const panel = document.querySelector('.liquid-lyrics-panel');
-    if (!panel || !panel.offsetParent) return false;        // closed / hidden
-    const c = panel.querySelector('.liquid-lyrics-content');
-    if (!c) return false;
-    if (c.getBoundingClientRect().height < 50) return false; // not laid out yet
-    if (c.children.length === 0) return true;                // blank
-    const actual = llActualTitle();
-    const shown = llShownTitle();
-    return !!(actual && shown && shown !== actual);          // stale
+  function llDesynced() {
+    if (localStorage.getItem(LL_OFF_KEY) === 'off') return false;
+    if (!llShowing()) return false;                 // dismissed: never touch it
+    const c = llPanel()?.querySelector('.liquid-lyrics-content');
+    if (!c || c.getBoundingClientRect().height < 50) return false;
+    if (c.children.length === 0) return true;       // mounted blank
+    const a = llActualTitle(), b = llShownTitle();
+    return !!(a && b && a !== b);                   // showing the wrong track
   }
 
-  async function repairLyrics() {
-    if (LL.busy || LL.attempts >= LL.MAX) return;
-    const btn = [...document.querySelectorAll('button')]
-      .find(b => b.getAttribute('aria-label') === 'Liquid Lyrics');
-    if (!btn) return;
-    LL.busy = true; LL.attempts++;
+  async function repairLyrics(force) {
+    if (LL.busy) return 'busy';
+    if (!force && !llDesynced()) return 'not desynced';
+    const btn = llToggle();
+    if (!btn) return 'no toggle';
+    const wasShowing = llShowing();
+    if (!force && !wasShowing) return 'panel dismissed';
+    LL.busy = true;
     try {
       btn.click();
-      await new Promise(r => setTimeout(r, 240));
+      await new Promise(r => setTimeout(r, 280));
       btn.click();
       await new Promise(r => setTimeout(r, 420));
+      // never leave the panel in a state the user did not choose
+      if (llShowing() !== wasShowing) { btn.click(); await new Promise(r => setTimeout(r, 260)); }
+      return 'remounted';
     } finally { LL.busy = false; }
   }
 
-  function llTick() {
-    const t = llActualTitle();
-    if (t !== LL.track) { LL.track = t; LL.attempts = 0; LL.streak = 0; }
-    if (lyricsPanelDesynced()) {
-      LL.streak++;
-      if (LL.streak >= 2) { LL.streak = 0; repairLyrics(); }
-    } else {
-      LL.streak = 0;
-    }
-  }
-
-  setInterval(llTick, 900);
-
-  // React to track changes promptly rather than waiting for the poll. The panel
-  // needs a moment to (fail to) update before we judge it desynced.
   try {
     Spicetify?.Player?.addEventListener?.('songchange', () => {
-      LL.attempts = 0; LL.streak = 0;
-      setTimeout(() => { if (lyricsPanelDesynced()) repairLyrics(); }, 1200);
+      LL.attempts = 0;
+      setTimeout(() => {
+        if (LL.attempts < LL.MAX && llDesynced()) { LL.attempts++; repairLyrics(false); }
+      }, 1400);
     });
   } catch {}
 
-  window.liquifyLyricsRepair = { state: LL, check: lyricsPanelDesynced, repair: repairLyrics,
-                                 shown: llShownTitle, actual: llActualTitle };
+  window.liquifyLyricsRepair = {
+    repair: () => repairLyrics(true),
+    showing: llShowing,
+    desynced: llDesynced,
+    shown: llShownTitle,
+    actual: llActualTitle,
+    disable() { localStorage.setItem(LL_OFF_KEY, 'off'); return 'auto-repair off'; },
+    enable() { localStorage.removeItem(LL_OFF_KEY); return 'auto-repair on'; },
+  };
 
   window.liquifyUiTweaks = { sweep, HIDE_CHIPS };
 })();
