@@ -361,6 +361,11 @@
   // queryLocalFonts is the complete answer where it is available; it needs a
   // permission and a secure context, and simply throws where it is not.
   let localFonts = null;
+  // Kicked off at load rather than when the panel opens. React rebuilds the
+  // settings panel, and an async fill started on open lands on whichever copy
+  // of the block existed when it was requested -- which is not necessarily the
+  // one on screen, so the list came back empty. With the answer already cached
+  // by the time a panel exists, the fill is synchronous and cannot miss.
   async function suggestFonts() {
     if (localFonts) return localFonts;
     try {
@@ -391,6 +396,8 @@
     localFonts = pool.filter(fontExists).sort();
     return localFonts;
   }
+
+  suggestFonts();  // warm the cache before any panel exists
 
   function setFont(which, family) {
     const v = String(family || '').trim();
@@ -438,7 +445,7 @@
       return `
       <label style="display:flex;align-items:center;gap:10px;margin:8px 0;font:400 12px/1 inherit;opacity:.85">
         <span style="min-width:82px">${label}</span>
-        <input type="text" data-lqx-font="${which}" value="${cur.replace(/"/g, '&quot;')}"
+        <input type="text" list="lqx-font-list" data-lqx-font="${which}" value="${cur.replace(/"/g, '&quot;')}"
                placeholder="default" spellcheck="false"
                style="flex:1;min-width:0;padding:5px 8px;border-radius:7px;border:0;
                       background:rgba(255,255,255,.08);color:#fff;font:400 12px/1 inherit">
@@ -456,19 +463,26 @@
           name resolves to a real font; a cross means it will fall back.
         </div>
       </div>
+      <datalist id="lqx-font-list"></datalist>
       ${fontRow('body', 'Body font')}${fontRow('heading', 'Heading font')}`;
     wrap.appendChild(fonts);
-    // A <datalist> was the obvious control here and it was the wrong one: the
-    // browser filters its options against whatever is already in the field, so
-    // with "Space Grotesk" typed the list showed nothing else and every other
-    // installed font looked missing. A <select> always lists everything.
-    suggestFonts().then((names) => {
-      if (!names?.length) return;
+    // Both controls, because they answer different questions and each is wrong
+    // on its own. The datalist filters its options against what is typed, which
+    // is what you want when searching for a name you already know -- but it also
+    // means a field still holding "Space Grotesk" shows no other font at all,
+    // which read as "Monocraft isn't detected". The select ignores the field and
+    // always lists everything, which is what you want when browsing.
+    const fillFonts = (names) => {
+      if (!names?.length) return false;
+      const esc = (n) => n.replace(/"/g, '&quot;');
+      const dl = fonts.querySelector('#lqx-font-list');
+      if (dl) dl.innerHTML = names.map((n) => `<option value="${esc(n)}">`).join('');
       for (const sel of fonts.querySelectorAll('select[data-lqx-font-pick]')) {
+        if (sel.options.length > 1) continue;
         const which = sel.getAttribute('data-lqx-font-pick');
         const input = fonts.querySelector(`input[data-lqx-font="${which}"]`);
-        sel.innerHTML = '<option value="">…</option>' +
-          names.map((n) => `<option value="${n.replace(/"/g, '&quot;')}">${n}</option>`).join('');
+        sel.innerHTML = '<option value="">\u25be</option>' +
+          names.map((n) => `<option value="${esc(n)}">${n}</option>`).join('');
         sel.addEventListener('change', () => {
           if (!sel.value) return;
           input.value = sel.value;
@@ -476,7 +490,12 @@
           sel.value = '';
         });
       }
-    });
+      return true;
+    };
+    // Synchronous when the list is already known, which it is after the first
+    // few hundred ms of the session; the promise path only covers a panel
+    // opened before detection finished.
+    if (!fillFonts(localFonts)) suggestFonts().then(fillFonts);
     for (const input of fonts.querySelectorAll('input[data-lqx-font]')) {
       const which = input.getAttribute('data-lqx-font');
       const mark = fonts.querySelector(`[data-lqx-font-ok="${which}"]`);

@@ -309,7 +309,18 @@
     setTimeout(() => { if (!npvWanted && rightPanel() === NPV) showFriends(); }, 350);
   }
   Spicetify.Player.addEventListener('songchange', restoreFriends);
-  setTimeout(showFriends, 1500);   // and make it the default on the way in
+
+  // Making it the default needs retries, not one shot. A single attempt at
+  // startup lost the race whenever the sidebar or the top-bar button had not
+  // mounted yet -- clickByLabel simply found nothing and returned false, and the
+  // app opened on Now Playing with no second try. This keeps asking until the
+  // panel actually reports the friend feed, then stops, and gives up after
+  // ~20s so a build without a friend feed does not click forever.
+  (function openFriendsAtStart(tries) {
+    if (npvWanted || rightPanel() === FRIENDS) return;
+    showFriends();
+    if (tries > 0) setTimeout(() => openFriendsAtStart(tries - 1), 600);
+  })(33);
 
   // ---- pointer probe (Alt+Shift+D) ----
   //

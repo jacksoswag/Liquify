@@ -1,4 +1,4 @@
-/* Now Playing Chrome — Drops the Now Playing panel's fullscreen/expand button, takes the specular rim off its "More options" button, and removes the 28px offset the panel title was holding open for the close button that Hide Library Chrome removes. */
+/* Now Playing Chrome — Keeps Now Playing widgets from painting over the friend feed. Drops the Now Playing panel's fullscreen/expand button, takes the specular rim off its "More options" button, and removes the 28px offset the panel title was holding open for the close button that Hide Library Chrome removes. */
 
 /* The expand/fullscreen control. Spotify's OTHER fullscreen button
    ([data-testid="fullscreen-mode-button"]) is already handled by the
@@ -28,4 +28,23 @@ button[aria-label="Expand Now Playing view"] {
 aside[aria-label="Now playing view"] button[aria-label^="More options"] {
   box-shadow: none !important;
   background: none !important;
+}
+
+/* Now Playing widgets must not paint over the friend feed.
+   Spotify swaps the right sidebar's panel, but Liquid Lyrics' sidebar card and
+   the theme's vinyl are positioned over that sidebar rather than laid out
+   inside the panel, so switching away from Now Playing leaves them behind --
+   the cover art, the track card and the lyrics end up drawn on top of the
+   friend list, which is what makes the two look layered.
+
+   Matched on what the panel currently is, so nothing here applies while Now
+   Playing is genuinely the open panel. Exact classes only: the sidebar card is
+   named directly rather than through a [class*="liquid-lyrics"] wildcard, which
+   would also match .liquid-lyrics-panel in the main view and pin it open over
+   everything -- see the note in liquid-lyrics-fill-npv.css. */
+.Root__right-sidebar:has(aside[aria-label="Listening activity"]) .liquid-lyrics-sidebar-card,
+.Root__right-sidebar:has(aside[aria-label="Listening activity"]) .liquid-lyrics-bg.ll-bg-sidebar,
+.Root__right-sidebar:has(aside[aria-label="Listening activity"]) .main-nowPlayingView-coverArt,
+.Root__right-sidebar:has(aside[aria-label="Listening activity"]) .main-nowPlayingView-nowPlayingWidgets {
+  display: none !important;
 }
