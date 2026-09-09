@@ -66,10 +66,23 @@
   const toggleLeftSidebar = () => { leftHidden = !leftHidden; syncSidebars(); };
   const toggleRightSidebar = () => { rightHidden = !rightHidden; syncSidebars(); };
 
+  // The player bar needs no grid bookkeeping the way the sidebars do: with the
+  // theme's floating player it is position:absolute and its grid row already
+  // measures 0px, so hiding it moves nothing. Both selectors are covered
+  // because the theme swaps between the two wrappers depending on whether the
+  // floating player is on.
+  let barHidden = false;
+  const togglePlayBar = () => {
+    barHidden = !barHidden;
+    document.documentElement.classList.toggle('lqx-no-playbar', barHidden);
+  };
+
   const sidebarStyle = document.createElement('style');
   sidebarStyle.textContent =
     `html.lqx-no-left .Root__nav-bar{display:none!important}` +
-    `html.lqx-no-right .Root__right-sidebar{display:none!important}`;
+    `html.lqx-no-right .Root__right-sidebar{display:none!important}` +
+    `html.lqx-no-playbar .Root__now-playing-bar,` +
+    `html.lqx-no-playbar aside[aria-label="Now playing bar"]{display:none!important}`;
   document.head.appendChild(sidebarStyle);
 
   // ---- shuffle: cycle rather than toggle ----
@@ -172,6 +185,7 @@
     ['cmd+shift', 'KeyM',       'Mute / unmute',              () => Spicetify.Player.toggleMute()],
     ['cmd+shift', 'KeyC',       'Copy track link',            copyTrackLink],
     ['cmd',       'KeyB',       'Toggle header bar',          toggleHeaderBar],
+    ['cmd+shift', 'KeyB',       'Toggle play bar',            togglePlayBar],
     ['',          'ArrowLeft',  'Back 5 seconds',             () => seek(-5000)],
     ['',          'ArrowRight', 'Forward 5 seconds',          () => seek(5000)],
 

@@ -7,6 +7,41 @@
 // Everything else in this setup is a plain CSS snippet; only put things here
 // that genuinely need script.
 
+// Liquid Lyrics' settings entry point is not only the button in its card
+// header -- it also registers a Spicetify.Menu item in the profile dropdown,
+// named "Liquid Lyrics Settings", whose callback opens its own panel directly.
+// That path never touches .ll-settings-btn, so the click interceptor further
+// down could not see it, and it is why the old name and the Lyrics panel kept
+// coming back however many times the button itself was checked.
+//
+// It is caught at construction rather than in the rendered menu: this file is
+// listed before liquid-lyrics.js loads, so the Item class can be wrapped before
+// Liquid Lyrics ever calls it, and the item is then born with the right name
+// and the right callback -- no rename flash, and nothing to re-apply when the
+// menu re-renders. A Proxy is used so every other menu item, and everything
+// else about the class, is untouched.
+(function patchLiquidLyricsMenuItem() {
+  const M = window.Spicetify?.Menu;
+  if (!M?.Item) return setTimeout(patchLiquidLyricsMenuItem, 60);
+  if (M.Item.__lqxPatched) return;
+  const Original = M.Item;
+  const openLiquify = () => document.getElementById('liquify-settings-gear-btn')?.click();
+  const Patched = new Proxy(Original, {
+    construct(target, args) {
+      if (args[0] === 'Liquid Lyrics Settings') {
+        args = args.slice();
+        args[0] = 'Liquify settings';
+        // The menu item is a toggle in Liquid Lyrics' hands; here it is a plain
+        // action, so the enabled state is left alone and only the panel opens.
+        args[2] = () => openLiquify();
+      }
+      return Reflect.construct(target, args);
+    },
+  });
+  Patched.__lqxPatched = true;
+  M.Item = Patched;
+})();
+
 (function liquifyUiTweaks() {
   if (!document.body) return setTimeout(liquifyUiTweaks, 300);
 
@@ -198,7 +233,7 @@
   for (const type of ['pointerdown', 'mousedown', 'click']) {
     document.addEventListener(type, (e) => {
       if (passThrough) return;
-      const btn = e.target?.closest?.('.ll-settings-btn');
+      const btn = e.target?.closest?.('.ll-settings-btn, [data-lqx-settings-entry]');
       if (!btn) return;
       // capture phase on document, so React's own handler on the root container
       // never sees it
@@ -227,6 +262,17 @@
   }
 
   function decorate() {
+    // Fallback for the profile-menu item, in case Liquid Lyrics managed to
+    // register it before the Proxy above was installed. The constructor patch
+    // is the real fix; this only catches a load-order race, and marks what it
+    // renamed so the click handler below can route it.
+    for (const el of document.querySelectorAll('.main-contextMenu-menuItemButton')) {
+      if (el.textContent.trim() !== 'Liquid Lyrics Settings') continue;
+      const label = [...el.querySelectorAll('*')].find(
+        (n) => n.children.length === 0 && n.textContent.trim() === 'Liquid Lyrics Settings') || el;
+      label.textContent = 'Liquify settings';
+      el.setAttribute('data-lqx-settings-entry', '1');
+    }
     // rename the entry point; Liquid Lyrics re-renders it, so this is idempotent
     const entry = document.querySelector('.ll-settings-btn');
     if (entry && entry.getAttribute('data-tooltip') !== 'Liquify settings') {
