@@ -236,6 +236,11 @@
     ['alt',       'KeyQ',       'Queue',                      () => clickByLabel('Queue')],
     ['alt',       'KeyN',       'Now Playing view',           toggleNowPlaying],
     ['alt',       'KeyM',       'Marketplace',                () => nav('/marketplace')],
+    // Custom apps get no sidebar entry on this client: Spicetify's
+    // _renderNavLinks throws "Cannot read properties of undefined (reading
+    // 'useReducer')" before it can add one, so a keybind is the only way in.
+    ['alt',       'KeyT',       'Statistics',                 () => nav('/stats')],
+    ['alt',       'KeyG',       'Name That Tune',             () => nav('/name-that-tune')],
     ['alt',       'KeyP',       'Your profile',               () => nav('/user/' + P.username)],
     ['alt',       'KeyL',       'Toggle lyrics',              toggleLyrics],
     ['alt',       'KeyB',       'Toggle left sidebar',        toggleLeftSidebar],
