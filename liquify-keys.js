@@ -218,15 +218,12 @@
     ['',          'ArrowRight', 'Forward 5 seconds',          () => seek(5000)],
 
     // --- app (alt) ---
-    // Alt+Shift, not Cmd+Alt. Cmd+Alt+Left/Right are Chromium's own
-    // previous/next-tab accelerators, handled in the browser process above the
-    // renderer, so the keydown never arrives and no page listener can claim
-    // them. Verified either side of that: dispatching the event by hand runs
-    // libraryBack and leaves the folder, while pressing the keys does nothing.
-    // Cmd+Alt+Left is kept as an alias -- it costs nothing and still works
-    // anywhere the shell does pass it through.
+    // Alt+Shift, not Cmd+Alt. Cmd+Alt+Left never reached this handler however it
+    // was bound, so the Cmd+Alt alias that used to sit here was dead weight and
+    // a misleading row in the cheat sheet. Alt+Shift also matches the
+    // convention the rest of the list follows -- Alt for app actions, next to
+    // Alt+Shift+B and Alt+Shift+F.
     ['alt+shift', 'ArrowLeft',  'Back out of library folder', libraryBack],
-    ['cmd+alt',   'ArrowLeft',  'Back out of library folder', libraryBack],
     ['alt',       'ArrowLeft',  'Navigate back',              navBack],
     ['alt',       'ArrowRight', 'Navigate forward',           () => P.History.goForward()],
     ['alt',       'KeyH',       'Home',                       () => nav('/')],
@@ -504,20 +501,6 @@
     // text editing on macOS, so they pass.
     if (isTyping(document.activeElement) && !/cmd|alt/.test(mod)) return;
 
-    // Records Cmd+Alt keydowns so delivery can be checked later. If a real
-    // press leaves nothing here, the keystroke never reached the page at all
-    // and no page listener could have caught it; if it does appear, the fault
-    // is on this side. Two modifiers plus a key makes this fire essentially
-    // never in normal use.
-    if (e.metaKey && e.altKey) {
-      try {
-        const log = JSON.parse(localStorage.getItem('liquify-cmdalt-log') || '[]');
-        log.push({ code: e.code, key: e.key, at: new Date().toISOString().slice(11, 19),
-                   typing: isTyping(document.activeElement),
-                   focus: document.activeElement?.tagName });
-        localStorage.setItem('liquify-cmdalt-log', JSON.stringify(log.slice(-12)));
-      } catch { /* diagnostics never break a keypress */ }
-    }
     const hit = BINDS.find(([m, code]) => m === mod && code === e.code);
     if (!hit) return;
     e.preventDefault();
