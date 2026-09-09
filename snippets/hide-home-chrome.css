@@ -27,13 +27,12 @@
 /* Home opens hard against the top edge. Its own padding is `4px 0 112px` --
    fine when the filter-chips bar sat above it taking 64px, but that bar is
    removed above, so the shortcuts were left touching the panel's top corner.
-   64px is the height that bar used to occupy, which is the space the page was
-   laid out expecting -- and it clears the 40px inline padding
-   .main-home-content uses, so the top reads as deliberate rather than as a
-   margin that happens to match the sides. The 112px at the bottom is left
-   alone. This is the one number to change if it wants to be roomier still. */
+   40px is the inline padding .main-home-content already uses, so the gap above
+   the first row equals the gap either side of it: the main view starts at
+   x=410/y=24 and the grid lands at x=450, so 40px here puts its top edge at
+   y=64 and the margin is square. The 112px at the bottom is left alone. */
 [data-testid="home-page"] {
-  padding-top: 64px !important;
+  padding-top: 40px !important;
 }
 
 /* The shortcuts grid is one glass panel wrapped around eight glass tiles, so
