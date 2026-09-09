@@ -1,4 +1,4 @@
-/* Hide Home Chrome — Removes the All/Music/Podcasts/Audiobooks filter bar and the "Your updates" header strip from Home, plus the friend-activity button from the top bar. */
+/* Hide Home Chrome — Removes the All/Music/Podcasts/Audiobooks filter bar and the "Your updates" header strip from Home, plus the friend-activity button from the top bar. Also drops the glass panel around the shortcuts grid and gives the page room to breathe at the top. */
 
 /* The whole filter bar, not just the four chips: the container also holds the
    glass pill behind them and the carousel's scroll buttons, so hiding only the
@@ -22,4 +22,38 @@
    open with no way to close it. */
 .Root__globalNav button[aria-label="Listening activity"] {
   display: none !important;
+}
+
+/* Home opens hard against the top edge. Its own padding is `4px 0 112px` --
+   fine when the filter-chips bar sat above it taking 64px, but that bar is
+   removed above, so the shortcuts were left touching the panel's top corner.
+   64px is the height that bar used to occupy, which is the space the page was
+   laid out expecting -- and it clears the 40px inline padding
+   .main-home-content uses, so the top reads as deliberate rather than as a
+   margin that happens to match the sides. The 112px at the bottom is left
+   alone. This is the one number to change if it wants to be roomier still. */
+[data-testid="home-page"] {
+  padding-top: 64px !important;
+}
+
+/* The shortcuts grid is one glass panel wrapped around eight glass tiles, so
+   every tile is rimmed twice -- its own rim plus the container's. The outer one
+   goes; the tiles keep theirs.
+   Its 16px padding goes with it: that padding existed to inset the tiles from
+   the panel edge, and with no panel there it is just an unexplained gap holding
+   the tiles 16px inside the content column that everything else on the page
+   lines up against. */
+/* `html body` is load-bearing. liquify-perf re-emits every all-inset rim it
+   finds in the live stylesheets into its own <style>, keyed by whatever
+   selector declared it -- for this container that is the generated class
+   .uUtn9BtGpFQYmnn1, not the view-homeShortcutsGrid-shortcuts name. Both
+   declarations are !important and both selectors are one class, so the tie went
+   to whichever came later in the document, which is always liquify-perf's sheet
+   because it is appended to <head> at runtime. Two element names in front make
+   this (0,1,2) against its (0,1,0) and the order stops mattering. */
+html body .view-homeShortcutsGrid-shortcuts {
+  box-shadow: none !important;
+  background: none !important;
+  backdrop-filter: none !important;
+  padding: 0 !important;
 }

@@ -79,14 +79,33 @@ html body .Root__nav-bar .main-yourLibraryX-headerContent
   overflow: visible !important;
 }
 
-/* Removing the back button pulled the folder name 44px left, to x=8, which put
-   it inside the panel's rounded corner and clipped it (measured: x=52 natural,
-   x=8 with the button hidden). Rather than leave the 32px gap the button used
-   to fill, the name is aligned to the header's own content edge. Every other
-   button in this header is excluded by name so only the folder title moves --
-   the heading in particular must not shift, since it carries its own -24px
-   transform from the theme. */
-html body .Root__nav-bar .main-yourLibraryX-collapseButton
-  button:not([aria-label="Collapse Your Library"]):not([aria-label="Expand Your Library"]):not([aria-label="Go back"]):not([aria-label="Create"]):not([aria-label^="More options"]) {
-  margin-left: 16px !important;
+/* No margin compensation here any more. An earlier version added
+   margin-left:16px because the folder name measured x=8 and was clipped by the
+   panel's rounded corner -- but that was the -36px hover transform below being
+   read at rest, not a real gap. With the transform pinned the name sits at the
+   header's own content edge on its own, and the 16px was pushing it 16px past
+   where it belongs (measured x=44 with it, x=28 without, against a header
+   content edge of x=24). */
+
+/* The library header animates on sidebar hover exactly the way the Now Playing
+   header does, and for the same reason. At rest the collapse icon
+   (.PnzFLbZQ_W8a7qJo) is opacity 0 and translate(-100%), and the row after it
+   -- the "Go back" button and the folder-name group -- sits at
+   translate(-36px); hovering .YourLibraryX fades the icon in and slides that
+   row to 0 to make room for it.
+
+   Both the collapse button and Go back are removed above, so that -36px is
+   holding a gap open for controls that no longer exist, and the folder name
+   jumped 36px to the right whenever the pointer entered the sidebar.
+
+   Pinned in both states: leaving the :hover rule alone would keep the jump and
+   only reverse its direction. Matched through the group rather than by the
+   generated class names (.K8DkW8q4HEw77Wx2, .DxJfCbGxPVwir09_) that carry the
+   transform, since those change with every Spotify build. The hover selectors
+   need the extra weight because Spotify marks its own hover transform
+   !important. */
+html body .Root__nav-bar .main-yourLibraryX-collapseButton > *,
+html body .YourLibraryX:hover .main-yourLibraryX-collapseButton > *,
+html body .YourLibraryX:has(:focus-visible) .main-yourLibraryX-collapseButton > * {
+  transform: none !important;
 }

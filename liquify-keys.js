@@ -68,9 +68,10 @@
 
   // The player bar needs no grid bookkeeping the way the sidebars do: with the
   // theme's floating player it is position:absolute and its grid row already
-  // measures 0px, so hiding it moves nothing. Both selectors are covered
+  // measures 0px, so moving it moves nothing else. Both selectors are covered
   // because the theme swaps between the two wrappers depending on whether the
-  // floating player is on.
+  // floating player is on. Unlike the sidebars this one slides out of the
+  // bottom of the window rather than being cut -- see the style below.
   let barHidden = false;
   const togglePlayBar = () => {
     barHidden = !barHidden;
@@ -81,8 +82,35 @@
   sidebarStyle.textContent =
     `html.lqx-no-left .Root__nav-bar{display:none!important}` +
     `html.lqx-no-right .Root__right-sidebar{display:none!important}` +
+    // The player bar slides down out of the window instead of being cut. Three
+    // things this has to get right:
+    //
+    //  - The transition lives on the bar unconditionally, not inside the
+    //    .lqx-no-playbar rule, or only the hide would animate and the return
+    //    would snap. It also has to outrank `transition: width .5s ease`, which
+    //    the floating player sets on .Root__now-playing-bar and which replaced
+    //    the whole shorthand -- measured: transition-property resolved to
+    //    "width" on the bar while the inner aside got the intended list. Hence
+    //    `html body` in front, and `width .5s ease` carried along at its
+    //    original timing so the player's width animation still works.
+    //  - `transform: none !important` is set on both these selectors by the
+    //    Dynamic Search Bar snippet. Adding `html.lqx-no-playbar` in front wins
+    //    on specificity (0,2,1 against 0,1,0) with both marked important, so the
+    //    slide survives that rule rather than silently doing nothing.
+    //  - 100% is the bar's own height, which clears the window exactly; the
+    //    extra 24px carries the floating player's shadow and rim out with it.
+    //
+    // visibility is what actually takes it out of painting and hit-testing once
+    // it has gone, delayed by the length of the slide so the animation is still
+    // visible on the way out, and switched with no delay on the way back in.
+    `html body .Root__now-playing-bar,html body aside[aria-label="Now playing bar"]{` +
+      `transition:transform .34s cubic-bezier(.32,.72,0,1),opacity .26s ease,` +
+      `visibility 0s,width .5s ease}` +
     `html.lqx-no-playbar .Root__now-playing-bar,` +
-    `html.lqx-no-playbar aside[aria-label="Now playing bar"]{display:none!important}`;
+    `html.lqx-no-playbar aside[aria-label="Now playing bar"]{` +
+      `transform:translateY(calc(100% + 24px))!important;opacity:0!important;` +
+      `visibility:hidden!important;pointer-events:none!important;` +
+      `transition:transform .34s cubic-bezier(.32,.72,0,1),opacity .26s ease,visibility 0s linear .34s}`;
   document.head.appendChild(sidebarStyle);
 
   // ---- shuffle: cycle rather than toggle ----
