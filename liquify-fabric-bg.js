@@ -135,17 +135,12 @@
     if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
     return s;
   };
-  const prog = gl.createProgram();
-  gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
-  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
-  gl.linkProgram(prog);
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { console.error(gl.getProgramInfoLog(prog)); return; }
-  gl.useProgram(prog);
-  const U = (n) => gl.getUniformLocation(prog, n);
-  const uni = { A: U('uA'), B: U('uB'), mix: U('uMix'), t: U('uT'), amp: U('uAmp'),
-                cover: U('uCover'), zoom: U('uZoom'), mean: U('uMean'),
-                grip: U('uGrip'), gw: U('uGW') };
-  gl.uniform1i(uni.A, 0); gl.uniform1i(uni.B, 1);
+  // Everything below -- the program, the uniform locations, the textures and
+  // every scrap of pixel-store state -- is owned by the GL context, and a
+  // context loss destroys all of it. That is not a rare condition: hiding and
+  // reopening the window is enough. So it lives in one function that can simply
+  // be run again.
+  let prog, uni, texA, texB;
 
   const mkTex = () => {
     const t = gl.createTexture();
@@ -160,10 +155,48 @@
                   new Uint8Array([0, 0, 0, 255]));
     return t;
   };
-  // WebGL's texture origin is bottom-left, but an HTML image's first row is its
-  // TOP row, so an unflipped upload renders the cover upside down.
-  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-  const texA = mkTex(), texB = mkTex();
+
+  function initGL() {
+    prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      console.error('[liquify-fabric-bg]', gl.getProgramInfoLog(prog));
+      return false;
+    }
+    gl.useProgram(prog);
+    const U = (n) => gl.getUniformLocation(prog, n);
+    uni = { A: U('uA'), B: U('uB'), mix: U('uMix'), t: U('uT'), amp: U('uAmp'),
+            cover: U('uCover'), zoom: U('uZoom'), mean: U('uMean'),
+            grip: U('uGrip'), gw: U('uGW') };
+    gl.uniform1i(uni.A, 0);
+    gl.uniform1i(uni.B, 1);
+    texA = mkTex();
+    texB = mkTex();
+    return true;
+  }
+  if (!initGL()) return;
+
+  // A restore hands back a context reset to defaults -- and the default for
+  // UNPACK_FLIP_Y_WEBGL is false, which is exactly how the cover came back
+  // upside down after reopening the window. Worse, a context is only ever
+  // restored if the loss event is preventDefault-ed; without that the canvas
+  // stays dead for the rest of the session.
+  canvas.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    running = false;
+    console.warn('[liquify-fabric-bg] webgl context lost; awaiting restore');
+  });
+  canvas.addEventListener('webglcontextrestored', () => {
+    if (!initGL()) return;
+    haveArt = false; lastUrl = ''; mixv = 0; fadeTo = 0; toB = true;
+    lastBlur = -1;
+    refreshArt();
+    apply();
+    console.log('[liquify-fabric-bg] webgl context restored');
+  });
+
   let mixv = 0, haveArt = false;
 
   // ---- artwork ----
@@ -184,6 +217,9 @@
       i.src = url;
     });
     if (!img) return;
+    // Set immediately before the upload rather than once at startup: this is
+    // context state, and a context loss silently returns it to false.
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
     const target = toB ? texB : texA;
     gl.activeTexture(toB ? gl.TEXTURE1 : gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, target);
