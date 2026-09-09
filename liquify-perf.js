@@ -332,6 +332,73 @@
     blur:     { key: 'liquify-fabric-blur',    label: 'Blur', min: 0, max: 160, dflt: 38 },
     fps:      { key: 'liquify-fabric-fps',     label: 'Frame rate', min: 10, max: 60, dflt: 60 },
   };
+  // ---- fonts ----
+  //
+  // Liquify's own font picker is a fixed catalogue of Google Fonts, loaded over
+  // the network. But applyFonts() in the theme builds `font-family: "<value>"`
+  // straight from the stored key with no validation against that catalogue, so
+  // any family name written there is honoured -- including one that is only
+  // installed locally. These two fields are therefore free text: whatever is in
+  // ~/Library/Fonts (or anywhere else the system knows about) can be typed in
+  // and will resolve.
+  const FONT_KEYS = { body: 'liquify-font-body', heading: 'liquify-font-heading' };
+
+  // Whether a family actually resolves. document.fonts.check() is no use here:
+  // for an unknown family it reports the fallback as a match and returns true.
+  // Measuring is unambiguous -- render the same string in the candidate with a
+  // fallback behind it, and against the fallback alone. Two different fallbacks
+  // are used because a font whose metrics happen to match monospace exactly
+  // would otherwise read as missing.
+  const fontExists = (name) => {
+    const family = String(name || '').trim().replace(/["']/g, '');
+    if (!family || family.toLowerCase() === 'default') return false;
+    const ctx = document.createElement('canvas').getContext('2d');
+    const w = (stack) => { ctx.font = `72px ${stack}`; return ctx.measureText('mmmwwwiii0123OO').width; };
+    return ['monospace', 'serif'].some((base) => Math.abs(w(`"${family}", ${base}`) - w(base)) > 0.5);
+  };
+
+  // Suggestions only -- the field works whether or not this returns anything.
+  // queryLocalFonts is the complete answer where it is available; it needs a
+  // permission and a secure context, and simply throws where it is not.
+  let localFonts = null;
+  async function suggestFonts() {
+    if (localFonts) return localFonts;
+    try {
+      if (typeof window.queryLocalFonts === 'function') {
+        // Raced against a timeout, because without a user gesture this call does
+        // not reject and does not resolve -- it sits waiting on a permission
+        // prompt that never appears, and awaiting it bare meant the fallback
+        // below never ran and the list came back empty.
+        const list = await Promise.race([
+          window.queryLocalFonts(),
+          new Promise((r) => setTimeout(() => r([]), 400)),
+        ]);
+        // An empty array is not success. The API resolves with nothing when the
+        // permission has not been granted -- it is gated on a user gesture, and
+        // opening the panel is not one it counts -- so treat empty exactly like
+        // unsupported and fall through to probing.
+        const families = [...new Set(list.map((f) => f.family))].sort();
+        if (families.length) { localFonts = families; return localFonts; }
+      }
+    } catch { /* permission refused or unsupported; fall through */ }
+    // Fallback: probe a pool and keep whatever the system actually has. Misses
+    // anything not named here, which is why the field is not a dropdown.
+    const pool = ['Space Grotesk', 'Inconsolata', 'Crimson Text', 'Newsreader', 'Sono',
+      'Monocraft', 'Latin Modern Mono', 'SF Pro', 'SF Pro Display', 'SF Pro Text', 'SF Mono',
+      'Helvetica Neue', 'Avenir Next', 'Menlo', 'Monaco', 'Optima', 'Futura', 'Baskerville',
+      'Georgia', 'Palatino', 'Times New Roman', 'Courier New', 'Verdana', 'Arial',
+      'Charter', 'Iowan Old Style', 'Hoefler Text', 'Didot', 'American Typewriter'];
+    localFonts = pool.filter(fontExists).sort();
+    return localFonts;
+  }
+
+  function setFont(which, family) {
+    const v = String(family || '').trim();
+    localStorage.setItem(FONT_KEYS[which], v || 'default');
+    // The theme owns the stylesheet these keys drive; this is its re-apply hook.
+    try { window.liquifyApplyAllSettings?.(); } catch (e) { console.warn('[liquify-perf] font apply', e); }
+  }
+
   const fabricVal = (k) => {
     const s = FABRIC[k], v = parseFloat(localStorage.getItem(s.key));
     return Number.isFinite(v) ? Math.max(s.min, Math.min(s.max, v)) : s.dflt;
@@ -363,6 +430,48 @@
         </div>
       </div>
       ${row('strength')}${row('speed')}${row('blur')}${row('fps')}`;
+    const fonts = document.createElement('div');
+    fonts.style.cssText = 'margin-top:14px';
+    const fontRow = (which, label) => {
+      const v = localStorage.getItem(FONT_KEYS[which]) || '';
+      const cur = v && v !== 'default' ? v : '';
+      return `
+      <label style="display:flex;align-items:center;gap:10px;margin:8px 0;font:400 12px/1 inherit;opacity:.85">
+        <span style="min-width:82px">${label}</span>
+        <input type="text" list="lqx-font-list" data-lqx-font="${which}" value="${cur.replace(/"/g, '&quot;')}"
+               placeholder="default" spellcheck="false"
+               style="flex:1;min-width:0;padding:5px 8px;border-radius:7px;border:0;
+                      background:rgba(255,255,255,.08);color:#fff;font:400 12px/1 inherit">
+        <span data-lqx-font-ok="${which}" style="min-width:14px;text-align:center;opacity:.75"></span>
+      </label>`;
+    };
+    fonts.innerHTML = `
+      <div style="font:600 13px/1.4 inherit;opacity:.9;margin-bottom:4px">Fonts
+        <div style="font:400 11px/1.4 inherit;opacity:.55;margin-top:3px">
+          Any font installed on this machine, by family name -- not just the
+          theme's built-in list. Leave empty for Spotify's own. A tick means the
+          name resolves to a real font; a cross means it will fall back.
+        </div>
+      </div>
+      <datalist id="lqx-font-list"></datalist>
+      ${fontRow('body', 'Body font')}${fontRow('heading', 'Heading font')}`;
+    wrap.appendChild(fonts);
+    suggestFonts().then((names) => {
+      const dl = fonts.querySelector('#lqx-font-list');
+      if (dl && names?.length) dl.innerHTML = names.map((n) => `<option value="${n.replace(/"/g, '&quot;')}">`).join('');
+    });
+    for (const input of fonts.querySelectorAll('input[data-lqx-font]')) {
+      const which = input.getAttribute('data-lqx-font');
+      const mark = fonts.querySelector(`[data-lqx-font-ok="${which}"]`);
+      const sync = () => {
+        const name = input.value.trim();
+        mark.textContent = !name ? '' : fontExists(name) ? '\u2713' : '\u2717';
+        mark.style.color = !name ? '' : fontExists(name) ? '#4ade80' : '#f87171';
+        input.style.fontFamily = name ? `"${name.replace(/"/g, '')}", inherit` : '';
+      };
+      input.addEventListener('input', () => { sync(); setFont(which, input.value); });
+      sync();
+    }
     const chroma = document.createElement('div');
     chroma.style.cssText = 'margin-top:14px';
     chroma.innerHTML = `

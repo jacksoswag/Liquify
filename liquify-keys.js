@@ -304,11 +304,25 @@
         const r = t.getBoundingClientRect();
         box.style.cssText = base + `;outline:2px solid cyan;left:${r.x}px;top:${r.y}px;width:${r.width}px;height:${r.height}px`;
       }
+      // screenX/screenY are the OS pointer position, clientX/clientY the page's.
+      // Subtracting the window's own screen origin converts one into the
+      // other's space, so `delta` is exactly the mismatch being hunted: zero
+      // means the page and the cursor agree, a constant non-zero value means
+      // the window's content origin is misplaced, and a value that grows as the
+      // pointer moves right and down means the frame is being scaled -- the
+      // renderer's viewport and the window's content area disagree on size.
+      const dx = (e.screenX - window.screenX) - e.clientX;
+      const dy = (e.screenY - window.screenY) - e.clientY;
+      const r = t ? t.getBoundingClientRect() : null;
       readout.textContent =
-        `pointer  ${Math.round(e.clientX)}, ${Math.round(e.clientY)}\n` +
+        `page     ${Math.round(e.clientX)}, ${Math.round(e.clientY)}\n` +
+        `screen   ${Math.round(e.screenX)}, ${Math.round(e.screenY)}\n` +
+        `window   ${Math.round(window.screenX)}, ${Math.round(window.screenY)}\n` +
+        `delta    ${Math.round(dx)}, ${Math.round(dy)}\n` +
+        `viewport ${innerWidth}x${innerHeight}  outer ${outerWidth}x${outerHeight}\n` +
+        `dpr      ${devicePixelRatio}\n` +
         `element  ${t ? (t.getAttribute?.('aria-label') || t.tagName) : 'none'}\n` +
-        (t ? `box      ${Math.round(t.getBoundingClientRect().x)}, ${Math.round(t.getBoundingClientRect().y)} ` +
-             `${Math.round(t.getBoundingClientRect().width)}x${Math.round(t.getBoundingClientRect().height)}` : '');
+        (r ? `box      ${Math.round(r.x)}, ${Math.round(r.y)} ${Math.round(r.width)}x${Math.round(r.height)}` : '');
     };
     document.addEventListener('mousemove', onMove, true);
     probeEls = { cross, box, readout, onMove };
