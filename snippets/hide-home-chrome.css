@@ -1,4 +1,4 @@
-/* Hide Home Chrome — Removes the All/Music/Podcasts/Audiobooks filter bar and the "Your updates" header strip from Home, plus the friend-activity button from the top bar. Also drops the glass panel around the shortcuts grid and gives the page room to breathe at the top. */
+/* Hide Home Chrome — Removes the All/Music/Podcasts/Audiobooks filter bar and the "Your updates" header strip from Home, plus the friend-activity button and the back/forward arrows from the top bar. Also drops the glass panel around the shortcuts grid and gives the page room to breathe at the top. */
 
 /* The whole filter bar, not just the four chips: the container also holds the
    glass pill behind them and the carousel's scroll buttons, so hiding only the
@@ -55,4 +55,14 @@ html body .view-homeShortcutsGrid-shortcuts {
   background: none !important;
   backdrop-filter: none !important;
   padding: 0 !important;
+}
+
+/* Back and forward. Both are on keybinds (Alt+Left, Alt+Right), and Alt+Left
+   already terminates at Home. Scoped to .Root__globalNav by name: the library
+   sidebar has its own button with the identical aria-label "Go back", which is
+   the folder control that Hide Library Chrome deals with separately -- an
+   unscoped selector would conflate the two. */
+.Root__globalNav button[aria-label="Go back"],
+.Root__globalNav button[aria-label="Go forward"] {
+  display: none !important;
 }

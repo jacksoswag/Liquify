@@ -232,6 +232,7 @@
     ['alt',       'KeyH',       'Home',                       () => nav('/')],
     ['alt',       'KeyS',       'Reveal bar + search',        toggleSearch],
     ['alt',       'KeyQ',       'Queue',                      () => clickByLabel('Queue')],
+    ['alt',       'KeyN',       'Now Playing view',           toggleNowPlaying],
     ['alt',       'KeyM',       'Marketplace',                () => nav('/marketplace')],
     ['alt',       'KeyP',       'Your profile',               () => nav('/user/' + P.username)],
     ['alt',       'KeyL',       'Toggle lyrics',              toggleLyrics],
@@ -265,6 +266,50 @@
       .filter((b) => b.getAttribute('aria-label') === 'Collapse folder');
     if (expanded.length) expanded[expanded.length - 1].click();   // innermost first
   }
+
+  // ---- right panel: the friend feed is the default ----
+  //
+  // Spotify switches the right sidebar to the Now Playing view whenever
+  // playback starts, which loses the friend feed on every track change. There
+  // is no PanelAPI on this build (Spicetify.Panel and Platform.PanelAPI are
+  // both absent), so the panel is identified by the aria-label its <aside>
+  // carries and driven by the same buttons the UI uses -- both of which the
+  // Hide Library Chrome / Hide Home Chrome snippets hide, which is fine:
+  // clickByLabel deliberately falls back to hidden elements.
+  //
+  // The switch back only happens when the Now Playing view appears WITHOUT
+  // having been asked for. Alt+N sets that intent, so a panel the user opened
+  // stays open across track changes; anything else that opens it is undone.
+  const FRIENDS = 'Listening activity';
+  const NPV = 'Now playing view';
+  const rightPanel = () =>
+    document.querySelector('.Root__right-sidebar aside')?.getAttribute('aria-label') || '';
+  let npvWanted = false;
+
+  const showFriends = () => { if (rightPanel() !== FRIENDS) clickByLabel(FRIENDS); };
+  function toggleNowPlaying() {
+    if (rightPanel() === NPV) { npvWanted = false; showFriends(); return; }
+    npvWanted = true;
+    clickByLabel('Show Now Playing view', 'Hide Now Playing view');
+  }
+
+  // Driven by track changes, not by DOM mutations. A MutationObserver here
+  // wedged the renderer outright: its callback runs as a microtask, clicking
+  // from inside it mutates the DOM, and that queues the callback again before
+  // the event loop regains control -- the app stopped responding entirely, with
+  // even 1+1 failing to evaluate over the debugging protocol. Rate-limiting it
+  // was not enough, so the observer is gone.
+  //
+  // songchange is the only thing that actually causes the unwanted switch, so
+  // that is what this listens to. The delay lets Spotify finish opening the
+  // panel before it is put back; doing it synchronously raced the switch and
+  // sometimes lost.
+  function restoreFriends() {
+    if (npvWanted) return;
+    setTimeout(() => { if (!npvWanted && rightPanel() === NPV) showFriends(); }, 350);
+  }
+  Spicetify.Player.addEventListener('songchange', restoreFriends);
+  setTimeout(showFriends, 1500);   // and make it the default on the way in
 
   // ---- pointer sampler ----
   //

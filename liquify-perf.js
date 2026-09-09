@@ -438,10 +438,13 @@
       return `
       <label style="display:flex;align-items:center;gap:10px;margin:8px 0;font:400 12px/1 inherit;opacity:.85">
         <span style="min-width:82px">${label}</span>
-        <input type="text" list="lqx-font-list" data-lqx-font="${which}" value="${cur.replace(/"/g, '&quot;')}"
+        <input type="text" data-lqx-font="${which}" value="${cur.replace(/"/g, '&quot;')}"
                placeholder="default" spellcheck="false"
                style="flex:1;min-width:0;padding:5px 8px;border-radius:7px;border:0;
                       background:rgba(255,255,255,.08);color:#fff;font:400 12px/1 inherit">
+        <select data-lqx-font-pick="${which}" title="Fonts found on this machine"
+                style="width:26px;padding:5px 0;border-radius:7px;border:0;cursor:pointer;
+                       background:rgba(255,255,255,.08);color:#fff;font:400 12px/1 inherit"></select>
         <span data-lqx-font-ok="${which}" style="min-width:14px;text-align:center;opacity:.75"></span>
       </label>`;
     };
@@ -453,12 +456,26 @@
           name resolves to a real font; a cross means it will fall back.
         </div>
       </div>
-      <datalist id="lqx-font-list"></datalist>
       ${fontRow('body', 'Body font')}${fontRow('heading', 'Heading font')}`;
     wrap.appendChild(fonts);
+    // A <datalist> was the obvious control here and it was the wrong one: the
+    // browser filters its options against whatever is already in the field, so
+    // with "Space Grotesk" typed the list showed nothing else and every other
+    // installed font looked missing. A <select> always lists everything.
     suggestFonts().then((names) => {
-      const dl = fonts.querySelector('#lqx-font-list');
-      if (dl && names?.length) dl.innerHTML = names.map((n) => `<option value="${n.replace(/"/g, '&quot;')}">`).join('');
+      if (!names?.length) return;
+      for (const sel of fonts.querySelectorAll('select[data-lqx-font-pick]')) {
+        const which = sel.getAttribute('data-lqx-font-pick');
+        const input = fonts.querySelector(`input[data-lqx-font="${which}"]`);
+        sel.innerHTML = '<option value="">…</option>' +
+          names.map((n) => `<option value="${n.replace(/"/g, '&quot;')}">${n}</option>`).join('');
+        sel.addEventListener('change', () => {
+          if (!sel.value) return;
+          input.value = sel.value;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          sel.value = '';
+        });
+      }
     });
     for (const input of fonts.querySelectorAll('input[data-lqx-font]')) {
       const which = input.getAttribute('data-lqx-font');
