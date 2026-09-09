@@ -2,11 +2,19 @@
 
 /* These stay in the DOM rather than being removed: liquify-keys.js drives them
    by clicking, and a display:none element still dispatches a click. */
-/* NOT [aria-label="Collapse Your Library"]: that button IS the "Your Library"
-   heading -- it wraps an <h1> -- so hiding it empties the header, collapses it
-   to zero height and shifts everything below. Only the icon-only
-   "Expand Your Library" toggle goes. */
+/* [aria-label="Collapse Your Library"] DOES go. An earlier version of this file
+   left it alone on the grounds that it "is the Your Library heading, it wraps
+   an <h1>". It does wrap an <h1>, but inside a .e-10810-visually-hidden span --
+   that h1 is the screen-reader name, not the visible heading. The only thing
+   the button paints is the collapse icon, which is what was still showing.
+
+   What the earlier attempt actually broke: this button is the sole child of
+   .main-yourLibraryX-collapseButton whenever you are not inside a folder, so
+   hiding it left that flex child empty and the header collapsed to nothing.
+   The min-height on .main-yourLibraryX-headerContent below holds the row open
+   instead. */
 .Root__nav-bar button[aria-label="Go back"],
+button[aria-label="Collapse Your Library"],
 button[aria-label="Expand Your Library"],
 button[aria-label="Hide Now Playing view"],
 button[aria-label="Show Now Playing view"] {
@@ -35,6 +43,14 @@ button[aria-label="Show Now Playing view"] {
    The name is also freed from its fixed width: with the back and collapse
    buttons gone there is room, and it should only ellipsise if it genuinely
    cannot fit. */
+/* "More options" gets the rim stripped too, but keeps its own width: it is a
+   real 35px icon button, not a text label, so the auto-width and overflow
+   below would collapse it. */
+html body .Root__nav-bar .main-yourLibraryX-headerContent
+  button[aria-label^="More options"] {
+  box-shadow: none !important;
+  background: none !important;
+}
 html body .Root__nav-bar .main-yourLibraryX-headerContent
   button:not([aria-label="Create"]):not([aria-label^="More options"]) {
   box-shadow: none !important;
@@ -43,6 +59,15 @@ html body .Root__nav-bar .main-yourLibraryX-headerContent
   max-width: none !important;
   min-width: 0 !important;
   overflow: visible !important;
+}
+
+/* Holds the header row open at its natural height. Without the collapse
+   button there is nothing in .main-yourLibraryX-collapseButton at the library
+   root, and the header -- which is sized by its content -- went to 0. Measured
+   natural content height: 35px. */
+.main-yourLibraryX-headerContent {
+  min-height: 35px !important;
+  align-items: center !important;
 }
 
 /* Let the heading/folder-name group take the width the removed buttons freed,

@@ -1,0 +1,25 @@
+/* Hide Home Chrome — Removes the All/Music/Podcasts/Audiobooks filter bar and the "Your updates" header strip from Home, plus the friend-activity button from the top bar. */
+
+/* The whole filter bar, not just the four chips: the container also holds the
+   glass pill behind them and the carousel's scroll buttons, so hiding only the
+   chips would leave an empty 64px band with a rim floating in it. */
+.main-home-filterChipsContainer {
+  display: none !important;
+}
+
+/* The strip above the shortcuts grid, which is where Home renders the
+   "Your updates" section. It sits OUTSIDE
+   [data-testid="home-page"] .contentSpacing, so the Disable Homepage
+   Recommendations snippet -- which hides every child of that container except
+   the shortcuts grid -- never reached it. It reserves 256px whether or not it
+   has anything in it. */
+.main-home-homeHeader {
+  display: none !important;
+}
+
+/* Friend activity. Spotify labels it "Listening activity", not "Friend
+   Activity"; the panel it opens is matched too so it cannot be left stranded
+   open with no way to close it. */
+.Root__globalNav button[aria-label="Listening activity"] {
+  display: none !important;
+}

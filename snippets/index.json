@@ -1,62 +1,70 @@
 {
- "dynamic-search-bar-fixed": {
-  "title": "Dynamic Search Bar (push, not overlap)",
-  "description": "Search/nav bar stays collapsed until hovered or focused (cmd+L), then expands and pushes the page down instead of overlapping it. Also removes the -16px root margin that left an unrendered strip at the bottom of the window."
- },
- "remove-all-scrollbars": {
-  "title": "Remove All Scrollbars",
-  "description": "Hides every scrollbar in the client (sidebar, main view, panels, lyrics) while keeping scrolling fully functional."
- },
- "hide-switch-to-video": {
-  "title": "Hide Switch to Video Button",
-  "description": "Removes the 'Switch to video' button from the Now Playing view."
- },
- "hide-playlist-column-header": {
-  "title": "Hide Playlist Column Header",
-  "description": "Removes the '# / Title / Album / Date added / Time' header row above playlist tracks."
- },
- "hide-sort-and-collaborator": {
-  "title": "Hide Sort By & Add Collaborator",
-  "description": "Removes the sort dropdown and the invite-collaborators button from playlist pages."
- },
- "hide-add-mix-details-row": {
-  "title": "Hide Add / Mix / Name & Details Row",
-  "description": "Removes the entire Add / Mix / Name & details button row under the playlist header."
- },
- "fix-duplicate-metadata-dots": {
-  "title": "Fix Duplicate Playlist Metadata Dots",
-  "description": "Spotify emits two adjacent bullet separators between the playlist owner and the song-count/duration, plus a trailing orphan bullet. This collapses them to a single separator."
- },
- "liquid-lyrics-fill-npv": {
-  "title": "Liquid Lyrics Fill Now Playing Panel",
-  "description": "Makes the Liquid Lyrics card grow to fill the remaining height of the Now Playing panel instead of leaving empty space below it."
- },
- "rotating-cover-art-optimized": {
-  "title": "Rotating Cover Art (Optimized)",
-  "description": "Spinning vinyl in the Now Playing view only. The playbar disc and song-card vinyl each forced every backdrop-filter surface to recompute per frame (~60pts of GPU)."
- },
- "hide-whats-new": {
-  "title": "Hide What's New Button",
-  "description": "Removes the What's New button from the top bar."
- },
- "lyrics-headerless-card": {
-  "title": "Liquid Lyrics Headerless Card",
-  "description": "Removes the Liquid Lyrics card's top bar (icon and title) and floats its three controls over the top-right of the lyrics at low opacity, giving the lyrics the full height of the card."
- },
- "hide-home-button": {
-  "title": "Hide Home Button",
-  "description": "Removes the Home button from the top bar."
- },
- "hide-liquify-gear": {
-  "title": "Hide Liquify Gear Button",
-  "description": "Removes the Liquify settings gear from the top bar; its settings moved into the merged menu on the Liquid Lyrics settings button (or Alt+,)."
- },
- "hide-marketplace-icon": {
-  "title": "Hide Marketplace Icon",
-  "description": "Removes the Marketplace button from the top bar; still reachable at Alt+M."
- },
- "hide-library-chrome": {
-  "title": "Hide Library Chrome",
-  "description": "Removes the sidebar back arrow, the library collapse/expand buttons and the Now Playing show/hide buttons (all on keybinds); makes Create an icon-only square; strips the glass rim from folder names and lets them use the freed width."
- }
+  "dynamic-search-bar-fixed": {
+    "title": "Dynamic Search Bar (push, not overlap)",
+    "description": "Search/nav bar stays collapsed until hovered or focused (cmd+L), then expands and pushes the page down instead of overlapping it. Also removes the -16px root margin that left an unrendered strip at the bottom of the window."
+  },
+  "remove-all-scrollbars": {
+    "title": "Remove All Scrollbars",
+    "description": "Hides every scrollbar in the client (sidebar, main view, panels, lyrics) while keeping scrolling fully functional."
+  },
+  "hide-switch-to-video": {
+    "title": "Hide Switch to Video Button",
+    "description": "Removes the 'Switch to video' button from the Now Playing view."
+  },
+  "hide-playlist-column-header": {
+    "title": "Hide Playlist Column Header",
+    "description": "Removes the '# / Title / Album / Date added / Time' header row above playlist tracks."
+  },
+  "hide-sort-and-collaborator": {
+    "title": "Hide Sort By & Add Collaborator",
+    "description": "Removes the sort dropdown and the invite-collaborators button from playlist pages."
+  },
+  "hide-add-mix-details-row": {
+    "title": "Hide Add / Mix / Name & Details Row",
+    "description": "Removes the entire Add / Mix / Name & details button row under the playlist header."
+  },
+  "fix-duplicate-metadata-dots": {
+    "title": "Fix Duplicate Playlist Metadata Dots",
+    "description": "Spotify emits two adjacent bullet separators between the playlist owner and the song-count/duration, plus a trailing orphan bullet. This collapses them to a single separator."
+  },
+  "liquid-lyrics-fill-npv": {
+    "title": "Liquid Lyrics Fill Now Playing Panel",
+    "description": "Makes the Liquid Lyrics card grow to fill the remaining height of the Now Playing panel instead of leaving empty space below it."
+  },
+  "rotating-cover-art-optimized": {
+    "title": "Rotating Cover Art (Optimized)",
+    "description": "Spinning vinyl in the Now Playing view only. The playbar disc and song-card vinyl each forced every backdrop-filter surface to recompute per frame (~60pts of GPU)."
+  },
+  "hide-whats-new": {
+    "title": "Hide What's New Button",
+    "description": "Removes the What's New button from the top bar."
+  },
+  "lyrics-headerless-card": {
+    "title": "Liquid Lyrics Headerless Card",
+    "description": "Removes the Liquid Lyrics card's top bar (icon and title) and floats its three controls over the top-right of the lyrics at low opacity, giving the lyrics the full height of the card."
+  },
+  "hide-home-button": {
+    "title": "Hide Home Button",
+    "description": "Removes the Home button from the top bar."
+  },
+  "hide-liquify-gear": {
+    "title": "Hide Liquify Gear Button",
+    "description": "Removes the Liquify settings gear from the top bar; its settings moved into the merged menu on the Liquid Lyrics settings button (or Alt+,)."
+  },
+  "hide-marketplace-icon": {
+    "title": "Hide Marketplace Icon",
+    "description": "Removes the Marketplace button from the top bar; still reachable at Alt+M."
+  },
+  "hide-library-chrome": {
+    "title": "Hide Library Chrome",
+    "description": "Removes the sidebar back arrow, the library collapse/expand buttons and the Now Playing show/hide buttons (all on keybinds); makes Create an icon-only square; strips the glass rim from folder names and lets them use the freed width."
+  },
+  "now-playing-chrome": {
+    "title": "Now Playing Chrome",
+    "description": "Drops the Now Playing panel's fullscreen/expand button, takes the specular rim off its More options button, and removes the 28px offset the panel title was holding open for the removed close button."
+  },
+  "hide-home-chrome": {
+    "title": "Hide Home Chrome",
+    "description": "Removes the All/Music/Podcasts/Audiobooks filter bar and the Your updates header strip from Home, plus the friend-activity button from the top bar."
+  }
 }

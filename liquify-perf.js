@@ -320,9 +320,9 @@
   // ---- drift controls in Liquify's settings panel ----
   //
   // Liquify's settings UI is minified and exposes no extension point, so this
-  // appends a small section of its own when the panel opens, reusing the
-  // panel's classes so it matches. Values persist in localStorage and rebuild
-  // the filter live.
+  // inserts a small section of its own at the top of the panel when it opens,
+  // reusing the panel's classes so it matches. Values persist in localStorage
+  // and rebuild the filter live.
   const SETTINGS_MARK = 'data-lqx-drift-ui';
   // Written here, read by liquify-fabric-bg.js on its next frame -- no rebuild
   // step, so the sliders are live.
@@ -341,7 +341,7 @@
     if (panel.querySelector(`[${SETTINGS_MARK}]`)) return;
     const wrap = document.createElement('div');
     wrap.setAttribute(SETTINGS_MARK, '1');
-    wrap.style.cssText = 'padding:14px 4px 4px;border-top:1px solid rgba(255,255,255,.12);margin-top:14px';
+    wrap.style.cssText = 'padding:4px 4px 14px;border-bottom:1px solid rgba(255,255,255,.12);margin-bottom:14px';
     const row = (k) => {
       const s = FABRIC[k], v = fabricVal(k);
       return `
@@ -381,7 +381,14 @@
       localStorage.setItem(CHROMA_KEY, e.target.checked ? 'on' : 'off');
       applyGlassStyle();
     });
-    panel.appendChild(wrap);
+    // FIRST child, not appended. Appending put this block below every one of the
+    // theme's own sections and below "Reset all Settings", so in practice it was
+    // never found -- the Background section near the top of the panel was where
+    // the sliders were being looked for, and those drove the theme's own
+    // (invisible) Kawarp canvas instead. These are now the first thing in the
+    // panel body, and liquify-fabric-bg stands the theme's animated background
+    // down so there is no second, dead set of background controls below.
+    panel.insertBefore(wrap, panel.firstChild);
     for (const input of wrap.querySelectorAll('input[data-lqx]')) {
       input.addEventListener('input', () => {
         const which = input.getAttribute('data-lqx');

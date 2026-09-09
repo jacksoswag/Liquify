@@ -354,13 +354,54 @@
   };
   function apply() {
     const on = cfg().strength > 0;
+    // Blur is applied here as well as in the frame loop. The loop stops
+    // entirely while the window is hidden or occluded (no requestAnimationFrame
+    // is delivered at all), so a blur changed in that state would not reach the
+    // canvas until the next frame -- which is one frame too late: the window
+    // becomes visible showing the old blur and then pops. Applying it on the
+    // 2s apply() tick means the canvas is already correct when the window
+    // comes back.
+    applyBlur(cfg().blur);
     document.documentElement.classList.toggle('lqx-fabric-on', on);
     canvas.style.display = on ? '' : 'none';
     if (on && !running) { running = true; resize(); requestAnimationFrame(frame); }
     if (!on) running = false;
   }
+  // ---- stand the theme's own animated background down ----
+  //
+  // Liquify ships its own WebGL background ("Kawarp"), and with
+  // liquify-bg-mode = "animated" it renders full-window -- measured at
+  // 1280x804, i.e. ten times this canvas's 403x253 backing store -- on its own
+  // requestAnimationFrame loop, every frame, underneath #lqx-fabric where none
+  // of it is ever visible.
+  //
+  // That is also why the Background section's sliders appeared to do nothing:
+  // Warp Intensity, Animation Speed, Saturation, Scale and Contrast are
+  // Kawarp's controls, and they were faithfully driving a canvas nobody could
+  // see. Switching the mode off "animated" stops that loop and takes those five
+  // rows out of the settings panel, so the only background controls on screen
+  // are the ones below that actually reach this shader.
+  //
+  // "dynamic" is the theme's default: the two crossfading cover layers. They
+  // stay in the render tree (Liquify samples them for --liquify-accent) but
+  // this extension's stylesheet already reduces them to 1px and zero opacity,
+  // so they cost nothing and show nothing.
+  //
+  // Only done while the fabric background is actually on. Turn Distortion down
+  // to 0 and the setting is left alone, so the theme's own background comes
+  // back rather than being permanently disabled behind the user's back.
+  const BG_MODE_KEY = 'liquify-bg-mode';
+  function standDownThemeBackground() {
+    if (cfg().strength <= 0) return;
+    if (localStorage.getItem(BG_MODE_KEY) !== 'animated') return;
+    localStorage.setItem(BG_MODE_KEY, 'dynamic');
+    window.dispatchEvent(new Event('liquifyBackgroundChange'));
+    console.log('[liquify-fabric-bg] theme animated background stood down (was covered by this one)');
+  }
+
   const boot = () => { if (!mount()) return setTimeout(boot, 600); resize(); applyBlur(cfg().blur); apply(); };
   boot();
+  standDownThemeBackground();
   setInterval(() => { mount(); apply(); }, 2000);
 
   window.liquifyFabric = {

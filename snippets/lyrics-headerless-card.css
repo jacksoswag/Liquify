@@ -1,4 +1,4 @@
-/* Liquid Lyrics Headerless Card — Removes the Liquid Lyrics card's top bar (the icon and "Liquid Lyrics" title) and floats its controls over the top-right of the lyrics themselves, so the lyrics get the card's full height. */
+/* Liquid Lyrics Headerless Card — Removes the Liquid Lyrics card's top bar (the icon and "Liquid Lyrics" title) and floats its controls over the top-right of the lyrics themselves, so the lyrics get the card's full height. The controls stay hidden until you hover the card. */
 
 /* Never set `display` on .liquid-lyrics-sidebar-card or .liquid-lyrics-panel --
    see liquid-lyrics-fill-npv.css for the failure that causes. Everything here
@@ -46,15 +46,20 @@
   padding-top: 0 !important;
 }
 
-/* The controls now float over the lyrics, so they rest at low opacity and come
-   up on hover. This keeps the full 54px the header used to take instead of
-   giving most of it back as top padding. */
+/* The controls float over the lyrics, so they are invisible until you hover the
+   card (or tab into them) and fade in over the lyrics only then. This keeps the
+   full 54px the header used to take instead of giving most of it back as top
+   padding. visibility rides along with the opacity so the buttons are not
+   click-targets sitting invisibly on top of the lyrics while hidden. */
 .liquid-lyrics-sidebar-card > .ll-sidebar-card-header {
-  opacity: 0.45;
-  transition: opacity 0.18s ease;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.18s ease, visibility 0s linear 0.18s;
 }
 
 .liquid-lyrics-sidebar-card:hover > .ll-sidebar-card-header,
 .liquid-lyrics-sidebar-card > .ll-sidebar-card-header:focus-within {
   opacity: 1;
+  visibility: visible;
+  transition: opacity 0.18s ease, visibility 0s;
 }

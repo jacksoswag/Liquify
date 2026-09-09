@@ -189,15 +189,23 @@
   }
   const openLiquifySettings = () => document.getElementById('liquify-settings-gear-btn')?.click();
 
-  document.addEventListener('click', (e) => {
-    if (passThrough) return;
-    const btn = e.target?.closest?.('.ll-settings-btn');
-    if (!btn) return;
-    // capture phase on document, so React's own handler on the root container
-    // never sees it
-    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-    openLiquifySettings();
-  }, true);
+  // pointerdown and mousedown are intercepted alongside click. Document-capture
+  // click already beats a React handler bound on the root container, but a
+  // listener bound directly to the button on an earlier phase -- pointerdown,
+  // say -- would fire before any click handler at all and open the Lyrics panel
+  // regardless. Swallowing all three costs nothing and removes the whole class
+  // of failure; only the click actually opens anything.
+  for (const type of ['pointerdown', 'mousedown', 'click']) {
+    document.addEventListener(type, (e) => {
+      if (passThrough) return;
+      const btn = e.target?.closest?.('.ll-settings-btn');
+      if (!btn) return;
+      // capture phase on document, so React's own handler on the root container
+      // never sees it
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      if (type === 'click') openLiquifySettings();
+    }, true);
+  }
 
   function buildTabs(active) {
     const bar = document.createElement('div');
