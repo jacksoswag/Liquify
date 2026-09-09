@@ -244,6 +244,7 @@
     ['alt',       'KeyD',       'Connect to a device',        () => clickByLabel('Connect to a device')],
     ['alt',       'Comma',      'Settings',                   openSettings],
     ['alt+shift', 'KeyP',       'Performance mode',           togglePerf],
+    ['alt+shift', 'KeyD',       'Pointer probe (debug)',      togglePointerProbe],
     ['alt',       'Slash',      'Show this shortcut list',    showCheatSheet],
   ];
 
@@ -263,6 +264,54 @@
     const expanded = [...nav.querySelectorAll('button')]
       .filter((b) => b.getAttribute('aria-label') === 'Collapse folder');
     if (expanded.length) expanded[expanded.length - 1].click();   // innermost first
+  }
+
+  // ---- pointer probe (Alt+Shift+D) ----
+  //
+  // For the class of bug where a control's visual and its clickable area
+  // disagree. Everything inside the renderer can be verified from here --
+  // getBoundingClientRect, elementFromPoint, injected mouse events and a
+  // screenshot with markers drawn at the measured rects all agreed for the
+  // library header buttons -- which leaves only the mapping between the real
+  // cursor and the page's coordinate space, and that is not observable without
+  // a physical pointer. This draws where the PAGE thinks the pointer is: if the
+  // crosshair does not sit under the actual cursor, the offset between them is
+  // the bug, and its size and direction are readable straight off the screen.
+  let probeOn = false, probeEls = null;
+  function togglePointerProbe() {
+    probeOn = !probeOn;
+    if (!probeOn) {
+      probeEls?.cross.remove(); probeEls?.readout.remove(); probeEls?.box.remove();
+      document.removeEventListener('mousemove', probeEls.onMove, true);
+      probeEls = null;
+      return;
+    }
+    const mk = (css) => { const d = document.createElement('div'); d.style.cssText = css; document.body.appendChild(d); return d; };
+    const base = 'position:fixed;pointer-events:none;z-index:2147483647';
+    const cross = mk(base + ';width:31px;height:31px;margin:-15px 0 0 -15px;' +
+      'background:linear-gradient(magenta,magenta) center/100% 1px no-repeat,' +
+      'linear-gradient(magenta,magenta) center/1px 100% no-repeat');
+    const box = mk(base + ';outline:2px solid cyan');
+    const readout = mk(base + ';left:12px;bottom:12px;padding:6px 9px;border-radius:8px;' +
+      'background:#000c;color:#fff;font:600 12px/1.5 ui-monospace,monospace;white-space:pre');
+    const onMove = (e) => {
+      cross.style.left = e.clientX + 'px';
+      cross.style.top = e.clientY + 'px';
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const btn = el?.closest?.('button, a, [role="button"]');
+      const t = btn || el;
+      if (t) {
+        const r = t.getBoundingClientRect();
+        box.style.cssText = base + `;outline:2px solid cyan;left:${r.x}px;top:${r.y}px;width:${r.width}px;height:${r.height}px`;
+      }
+      readout.textContent =
+        `pointer  ${Math.round(e.clientX)}, ${Math.round(e.clientY)}\n` +
+        `element  ${t ? (t.getAttribute?.('aria-label') || t.tagName) : 'none'}\n` +
+        (t ? `box      ${Math.round(t.getBoundingClientRect().x)}, ${Math.round(t.getBoundingClientRect().y)} ` +
+             `${Math.round(t.getBoundingClientRect().width)}x${Math.round(t.getBoundingClientRect().height)}` : '');
+    };
+    document.addEventListener('mousemove', onMove, true);
+    probeEls = { cross, box, readout, onMove };
   }
 
   // ---- header bar ----
