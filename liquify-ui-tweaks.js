@@ -171,13 +171,38 @@
   const lqOpen = () => !!document.querySelector(LQ_PANEL);
   const llOpen = () => !!document.querySelector(LL_PANEL);
 
-  const closeLiquify = () => { if (lqOpen()) document.getElementById('liquify-settings-gear-btn')?.click(); };
+  // Its own Close button, not the (now hidden) gear: clicking the gear again
+  // did not reliably toggle the panel shut, which left both overlays stacked.
+  const closeLiquify = () =>
+    document.querySelector('.liquifySettingsHeader button[aria-label="Close"]')?.click();
   const closeLyrics = () => { if (llOpen()) document.querySelector('.ll-settings-overlay')?.querySelector('.ll-settings-close, [aria-label*="lose"]')?.click(); };
+
+  // The entry point is relabelled "Liquify settings", so it has to open the
+  // Liquify panel; Liquid Lyrics' own settings become the second tab. Liquid
+  // Lyrics still owns the only code that can open its panel, so the tab reaches
+  // it by clicking the same button with the interceptor temporarily stood down.
+  let passThrough = false;
+  function openLyricsSettings() {
+    passThrough = true;
+    document.querySelector('.ll-settings-btn')?.click();
+    setTimeout(() => { passThrough = false; }, 0);
+  }
+  const openLiquifySettings = () => document.getElementById('liquify-settings-gear-btn')?.click();
+
+  document.addEventListener('click', (e) => {
+    if (passThrough) return;
+    const btn = e.target?.closest?.('.ll-settings-btn');
+    if (!btn) return;
+    // capture phase on document, so React's own handler on the root container
+    // never sees it
+    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+    openLiquifySettings();
+  }, true);
 
   function buildTabs(active) {
     const bar = document.createElement('div');
     bar.className = 'lqx-settings-tabs';
-    for (const [key, label] of [['lyrics', 'Lyrics'], ['liquify', 'Liquify']]) {
+    for (const [key, label] of [['liquify', 'Liquify'], ['lyrics', 'Lyrics']]) {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'lqx-settings-tab' + (key === active ? ' active' : '');
@@ -185,8 +210,8 @@
       b.addEventListener('click', (e) => {
         e.preventDefault(); e.stopPropagation();
         if (key === active) return;
-        if (key === 'liquify') { document.getElementById('liquify-settings-gear-btn')?.click(); closeLyrics(); }
-        else { closeLiquify(); document.querySelector('.ll-settings-btn')?.click(); }
+        if (key === 'liquify') { openLiquifySettings(); closeLyrics(); }
+        else { closeLiquify(); openLyricsSettings(); }
       });
       bar.appendChild(b);
     }
@@ -194,6 +219,12 @@
   }
 
   function decorate() {
+    // rename the entry point; Liquid Lyrics re-renders it, so this is idempotent
+    const entry = document.querySelector('.ll-settings-btn');
+    if (entry && entry.getAttribute('aria-label') !== 'Liquify settings') {
+      entry.setAttribute('aria-label', 'Liquify settings');
+      entry.setAttribute('title', 'Liquify settings');
+    }
     const ll = document.querySelector(LL_PANEL);
     if (ll && !ll.querySelector('.lqx-settings-tabs')) ll.prepend(buildTabs('lyrics'));
     const lq = document.querySelector(LQ_PANEL);

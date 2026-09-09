@@ -162,6 +162,7 @@
     ['',          'ArrowRight', 'Forward 5 seconds',          () => seek(5000)],
 
     // --- app (alt) ---
+    ['cmd+alt',   'ArrowLeft',  'Back out of library folder', libraryBack],
     ['alt',       'ArrowLeft',  'Navigate back',              () => P.History.goBack()],
     ['alt',       'ArrowRight', 'Navigate forward',           () => P.History.goForward()],
     ['alt',       'KeyH',       'Home',                       () => nav('/')],
@@ -182,6 +183,24 @@
     ['alt+shift', 'KeyP',       'Performance mode',           togglePerf],
     ['alt',       'Slash',      'Show this shortcut list',    showCheatSheet],
   ];
+
+  // Clicking a folder ROW drills into it and puts a "Go back" button in the
+  // sidebar header; clicking its chevron instead expands it inline, with no
+  // navigation. This handles both, drill-in first.
+  //
+  // The nav-bar scope is load-bearing: the top bar has its own button with the
+  // identical aria-label "Go back" for browser-style history, so an unscoped
+  // lookup would walk the app's history instead of leaving the folder.
+  function libraryBack() {
+    const nav = document.querySelector('.Root__nav-bar');
+    if (!nav) return;
+    const inFolder = [...nav.querySelectorAll('button')]
+      .find((b) => b.getAttribute('aria-label') === 'Go back');
+    if (inFolder) { inFolder.click(); return; }
+    const expanded = [...nav.querySelectorAll('button')]
+      .filter((b) => b.getAttribute('aria-label') === 'Collapse folder');
+    if (expanded.length) expanded[expanded.length - 1].click();   // innermost first
+  }
 
   // ---- header bar ----
   //
