@@ -80,7 +80,14 @@
     style.textContent = `
       #lqx-fabric{position:fixed;inset:0;width:100%;height:100%;z-index:0;
         pointer-events:none;filter:blur(${px.toFixed(1)}px) brightness(.45)}
-      html.lqx-fabric-on .liquify-bg-layer{display:none!important}
+      /* NOT display:none. Liquify samples these layers to derive
+         --liquify-accent, and removing them from the render tree left the
+         accent stuck at white until the next track change -- which shows up as
+         selected chips being unreadable white-on-white. They stay in the tree
+         but cost nothing: no filter, no size, fully transparent. */
+      html.lqx-fabric-on .liquify-bg-layer{
+        opacity:0!important;filter:none!important;width:1px!important;
+        height:1px!important;transform:none!important;pointer-events:none!important}
       html.liquify-perf #lqx-fabric{filter:blur(${(px / 2).toFixed(1)}px) brightness(.45)}`;
   }
 

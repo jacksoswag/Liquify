@@ -2,8 +2,11 @@
 
 /* These stay in the DOM rather than being removed: liquify-keys.js drives them
    by clicking, and a display:none element still dispatches a click. */
+/* NOT [aria-label="Collapse Your Library"]: that button IS the "Your Library"
+   heading -- it wraps an <h1> -- so hiding it empties the header, collapses it
+   to zero height and shifts everything below. Only the icon-only
+   "Expand Your Library" toggle goes. */
 .Root__nav-bar button[aria-label="Go back"],
-button[aria-label="Collapse Your Library"],
 button[aria-label="Expand Your Library"],
 button[aria-label="Hide Now Playing view"],
 button[aria-label="Show Now Playing view"] {
@@ -42,8 +45,23 @@ html body .Root__nav-bar .main-yourLibraryX-headerContent
   overflow: visible !important;
 }
 
+/* Let the heading/folder-name group take the width the removed buttons freed,
+   without letting it collapse to nothing when it happens to be empty. */
 .main-yourLibraryX-collapseButton {
   min-width: 0 !important;
   flex: 1 1 auto !important;
+  align-items: center !important;
   overflow: visible !important;
+}
+
+/* Removing the back button pulled the folder name 44px left, to x=8, which put
+   it inside the panel's rounded corner and clipped it (measured: x=52 natural,
+   x=8 with the button hidden). Rather than leave the 32px gap the button used
+   to fill, the name is aligned to the header's own content edge. Every other
+   button in this header is excluded by name so only the folder title moves --
+   the heading in particular must not shift, since it carries its own -24px
+   transform from the theme. */
+html body .Root__nav-bar .main-yourLibraryX-collapseButton
+  button:not([aria-label="Collapse Your Library"]):not([aria-label="Expand Your Library"]):not([aria-label="Go back"]):not([aria-label="Create"]):not([aria-label^="More options"]) {
+  margin-left: 16px !important;
 }

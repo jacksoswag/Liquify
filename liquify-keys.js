@@ -177,7 +177,7 @@
 
     // --- app (alt) ---
     ['cmd+alt',   'ArrowLeft',  'Back out of library folder', libraryBack],
-    ['alt',       'ArrowLeft',  'Navigate back',              () => P.History.goBack()],
+    ['alt',       'ArrowLeft',  'Navigate back',              navBack],
     ['alt',       'ArrowRight', 'Navigate forward',           () => P.History.goForward()],
     ['alt',       'KeyH',       'Home',                       () => nav('/')],
     ['alt',       'KeyS',       'Reveal bar + search',        toggleSearch],
@@ -248,6 +248,18 @@
       };
       input.addEventListener('blur', release);
     });
+  }
+
+  // Alt+Left walks the history back, and when the chain runs out it lands on
+  // Home rather than doing nothing -- so holding it down always ends somewhere
+  // known. `replace` rather than `push`: Home has to be the TERMINUS, and a
+  // push would add an entry that the next Alt+Left would immediately walk back
+  // off again.
+  function navBack() {
+    const h = P.History;
+    const canBack = typeof h.canGo === 'function' ? h.canGo(-1) : h.index > 0;
+    if (canBack) { h.goBack(); return; }
+    if (h.location?.pathname !== '/') h.replace('/');
   }
 
   function copyTrackLink() {
