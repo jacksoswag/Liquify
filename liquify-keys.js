@@ -218,6 +218,14 @@
     ['',          'ArrowRight', 'Forward 5 seconds',          () => seek(5000)],
 
     // --- app (alt) ---
+    // Alt+Shift, not Cmd+Alt. Cmd+Alt+Left/Right are Chromium's own
+    // previous/next-tab accelerators, handled in the browser process above the
+    // renderer, so the keydown never arrives and no page listener can claim
+    // them. Verified either side of that: dispatching the event by hand runs
+    // libraryBack and leaves the folder, while pressing the keys does nothing.
+    // Cmd+Alt+Left is kept as an alias -- it costs nothing and still works
+    // anywhere the shell does pass it through.
+    ['alt+shift', 'ArrowLeft',  'Back out of library folder', libraryBack],
     ['cmd+alt',   'ArrowLeft',  'Back out of library folder', libraryBack],
     ['alt',       'ArrowLeft',  'Navigate back',              navBack],
     ['alt',       'ArrowRight', 'Navigate forward',           () => P.History.goForward()],
