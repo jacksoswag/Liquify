@@ -157,6 +157,7 @@
     ['cmd',       'KeyP',       'Add track to playlist…',     addToPlaylist],
     ['cmd+shift', 'KeyM',       'Mute / unmute',              () => Spicetify.Player.toggleMute()],
     ['cmd+shift', 'KeyC',       'Copy track link',            copyTrackLink],
+    ['cmd',       'KeyB',       'Toggle header bar',          toggleHeaderBar],
     ['',          'ArrowLeft',  'Back 5 seconds',             () => seek(-5000)],
     ['',          'ArrowRight', 'Forward 5 seconds',          () => seek(5000)],
 
@@ -164,7 +165,7 @@
     ['alt',       'ArrowLeft',  'Navigate back',              () => P.History.goBack()],
     ['alt',       'ArrowRight', 'Navigate forward',           () => P.History.goForward()],
     ['alt',       'KeyH',       'Home',                       () => nav('/')],
-    ['alt',       'KeyS',       'Search',                     () => nav('/search')],
+    ['alt',       'KeyS',       'Reveal bar + search',        toggleSearch],
     ['alt',       'KeyQ',       'Queue',                      () => clickByLabel('Queue')],
     ['alt',       'KeyM',       'Marketplace',                () => nav('/marketplace')],
     ['alt',       'KeyP',       'Your profile',               () => nav('/user/' + P.username)],
@@ -181,6 +182,41 @@
     ['alt+shift', 'KeyP',       'Performance mode',           togglePerf],
     ['alt',       'Slash',      'Show this shortcut list',    showCheatSheet],
   ];
+
+  // ---- header bar ----
+  //
+  // The Dynamic Search Bar snippet collapses #global-nav-bar to an 8px hover
+  // catcher and reopens it on hover or when an input inside it takes focus.
+  // These two just drive that same state deliberately.
+  //
+  // Note Alt+S does NOT navigate to /search: that opens Spotify's browse page
+  // full of genre cards, which is not what "search" means here. Focusing the
+  // field is enough -- typing in it searches from wherever you already are.
+  let navPinned = false, navTemp = false;
+  const searchInput = () => document.querySelector('#global-nav-bar input[type="search"]');
+  const syncNav = () =>
+    document.documentElement.classList.toggle('lqx-nav-open', navPinned || navTemp);
+
+  function toggleHeaderBar() { navPinned = !navPinned; navTemp = false; syncNav(); }
+
+  function toggleSearch() {
+    const input = searchInput();
+    if (input && document.activeElement === input) {   // already searching: put it away
+      input.blur(); navTemp = false; navPinned = false; syncNav(); return;
+    }
+    navTemp = true; syncNav();
+    if (!input) return;
+    // let the bar finish expanding so focus lands on a laid-out element
+    requestAnimationFrame(() => {
+      input.focus();
+      input.select?.();
+      const release = () => {
+        input.removeEventListener('blur', release);
+        navTemp = false; syncNav();
+      };
+      input.addEventListener('blur', release);
+    });
+  }
 
   function copyTrackLink() {
     const uri = Spicetify.Player.data?.item?.uri;
@@ -277,7 +313,9 @@
     .lqx-keys-cheat-row{display:flex;gap:12px;align-items:center;padding:4px 8px}
     .lqx-keys-cheat-row kbd{flex:0 0 84px;text-align:center;padding:3px 6px;border-radius:7px;
       background:rgba(255,255,255,.12);font:12px ui-monospace,monospace}
-    .lqx-keys-cheat-row span{opacity:.85}`;
+    .lqx-keys-cheat-row span{opacity:.85}
+    /* id + class + id outranks the snippet's own id-only height rule */
+    html.lqx-nav-open #global-nav-bar{height:64px!important;opacity:1!important}`;
   document.head.appendChild(st);
 
   console.log('[liquify-keys] ' + BINDS.length + ' shortcuts bound (Alt+/ for the list)');
