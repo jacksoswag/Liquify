@@ -38,5 +38,9 @@
  "hide-whats-new": {
   "title": "Hide What's New Button",
   "description": "Removes the What's New button from the top bar."
+ },
+ "lyrics-headerless-card": {
+  "title": "Liquid Lyrics Headerless Card",
+  "description": "Removes the Liquid Lyrics card's top bar (icon and title) and floats its three controls over the top-right of the lyrics at low opacity, giving the lyrics the full height of the card."
  }
 }

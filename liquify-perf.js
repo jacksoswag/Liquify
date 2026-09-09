@@ -271,14 +271,117 @@
 
   // ---- shadows ----
   //
-  // Measured against a no-glass baseline: box-shadow ~6 GPU points, text-shadow
-  // ~3. Large soft shadows are blur passes in disguise -- each one is a
-  // separate rasterization of a blurred alpha mask, and Liquify puts one on
-  // essentially every panel. Dropped at the user's request.
+  // Two different things wear the name "shadow" in this theme and they have
+  // nothing in common performance-wise:
+  //
+  //   1. Outer drop shadows (Spotify's own, on cards/modals/overlays). Large
+  //      blur radii; each is a separate rasterization of a blurred alpha mask.
+  //      These are the expensive ones and they stay dropped.
+  //
+  //   2. Liquify's specular rim -- `--liquify-shadow`, three *inset* 1px
+  //      highlights (bright top edge, bottom glow, hairline outline) applied
+  //      to 223 selectors, 39 of them `::after` overlays covering whole panels.
+  //      These are what make the glass read as glass. A 1px inset shadow is
+  //      painted inside the element's own display list: no separate surface,
+  //      no blur pass, no per-frame cost.
+  //
+  // The first version of this file killed both with one `*` rule, which took
+  // the rim with it. The selector list below is extracted verbatim from
+  // user.css so the rim is restored exactly where the theme put it -- nowhere
+  // else, and never on an element the theme did not choose.
+  const RIM = `
+  .main-globalNav-searchInputContainer .main-topBar-searchBar,.kJKdTjeNSBY8tT1B,.zddkQq3wlxEOg6aa,
+  .Root__globalNav .main-globalNav-navLink,.main-topBar-buddyFeed,.main-userWidget-box,
+  .main-globalNav-historyButtons,.HqUgEQOPyVcDu2NW:hover,.Root__main-view::after,.Root__right-sidebar::after,
+  .main-nowPlayingView-coverArt::after,.main-nowPlayingView-section::after,.main-entityHeader-image::after,
+  .zPBFT1LAMAuacsb6::after,.view-homeShortcutsGrid-shortcut .view-homeShortcutsGrid-imageWrapper::after,
+  .ceHJbDWktNYBqkcL::after,.PromotionDefaultNativeImage-module_image-container__gQhJp::after,
+  .main-cardImage-imageWrapper::after,.DdDQ_LY0sYLt8LxK::after,.PrxpYQpIB876tjO6::after,
+  .J8g7rZ2MDknxmiYP::after,.lib2URAlzM4k2T_a .ckC1howZfkU9dexz.Dxar5n2kotgdT0zL::after,
+  .UQtkWvPf1V4H5Cb0 .IRLnJsXXcFoBCxbX::after,.KqsfjxDhIg8NevcC::after,.WRAJX50Owww6lGwsw::after,
+  .qm0mrbeno_z0mpoo::after,.f2AfA4jDLWwihiQO::after,.Root__cinema-view::after,.P8ZiZf6Nbowk6zjL::after,
+  .Gg1Ahel4Ik0T9YSl::after,.e-10451-button-icon-only--large::after,
+  span.e-10451-overflow-wrap-anywhere.e-10451-button-primary__inner.encore-bright-accent-set.e-10451-button-icon-only--medium::after,
+  span.e-10451-overflow-wrap-anywhere.e-10451-button-primary__inner.encore-inverted-light-set.e-10451-legacy-button--medium::after,
+  .main-nowPlayingWidget-coverArtContainer::after,.Root__nav-bar::after,
+  span.e-10451-overflow-wrap-anywhere.e-10451-button-primary__inner.encore-inverted-light-set.e-10451-button-icon-only--medium::after,
+  .DHOpYzKPUqobiHLW::after,
+  span.e-10451-overflow-wrap-anywhere.e-10451-button-primary__inner.e-10451-legacy-button--small::after,
+  span.e-10451-overflow-wrap-anywhere.e-10451-button-primary__inner.encore-bright-accent-set.e-10451-legacy-button--medium.V2fMzLP0dWw4E5zO::after,
+  .button-module__button___hf2qg_marketplace::after,
+  span.e-10451-overflow-wrap-anywhere.e-10451-button-primary__inner.encore-negative-set.e-10451-legacy-button--medium.V2fMzLP0dWw4E5zO::after,
+  .view-homeShortcutsGrid-shortcut .view-homeShortcutsGrid-PlayButtonContainer .view-homeShortcutsGrid-playButton::after,
+  span.e-10451-overflow-wrap-anywhere.e-10451-button-primary__inner.encore-bright-accent-set.e-10451-legacy-button--medium::after,
+  span.e-10451-overflow-wrap-anywhere.e-10451-button-primary__inner.encore-bright-accent-set.e-10451-legacy-button--large::after,
+  span.e-10810-overflow-wrap-anywhere.e-10810-button-primary__inner.encore-bright-accent-set.e-10810-button-icon-only--large::after,
+  span.e-10810-overflow-wrap-anywhere.e-10810-button-primary__inner.encore-bright-accent-set.e-10810-button-icon-only--medium::after,
+  span.e-10810-overflow-wrap-anywhere.e-10810-button-primary__inner.encore-inverted-light-set.e-10810-button-icon-only--medium::after,
+  .view-homeShortcutsGrid-shortcut,.main-home-filterChipsSection,.sdEd4DOwfUAWrygb,.NJh1B8rnlSUlK7sY,
+  .Oy9aO87dDlgDS8lf,.Oy9aO87dDlgDS8lf:hover,.we0UJfWAf8vWXQku,.x-filterBox-expandButton,
+  button.e-10451-legacy-button.e-10451-legacy-button-tertiary.e-10451-overflow-wrap-anywhere.encore-text-body-small-bold.e-10451-legacy-button--small.e-10451-button-tertiary--small.e-10451-button--trailing.e-10451-button-tertiary--condensed.e-10451-button-tertiary--text-subdued.encore-internal-color-text-subdued,
+  .search-searchCategory-carouselButton,.aE_ayHuwU0UG20h2:hover,.e-10451-box--tinted,
+  .main-nowPlayingView-headerWrapper,.e-10451-legacy-button-secondary,
+  button.e-10451-legacy-button.e-10451-legacy-button-tertiary.e-10451-overflow-wrap-anywhere.e-10451-button-tertiary--icon-only-small.e-10451-button-tertiary--icon-only.e-10451-button-tertiary--text-subdued.encore-internal-color-text-subdued.main-nowPlayingView-headerButton,
+  .main-nowPlayingView-trackInfo,.pHNOePN5RT09utW9 .g3QSV3tq49ScV2jX,.iiX8td2tfVETS09_ button,
+  .orFyQFu0kG4H73ty:hover,.e-10451-tab-item:hover,
+  .e-10451-box.e-10451-box--naked.e-10451-box--interactive.e-10451-box--padding-custom.e-10451-box--padding-block-start-custom.e-10451-box--padding-block-end-custom.e-10451-box--hover-custom.e-10451-box--min-size.e-10451-legacy-list-row.e-10451-legacy-list-row--has-leading.Z557o5iO1x0aSAXt.main-useDropTarget-base.main-useDropTarget-track.main-useDropTarget-local.main-useDropTarget-episode.kCuoeTp_4F8B1vXL.main-useDropTarget-album:hover,
+  .e-10451-box.e-10451-box--naked.e-10451-box--interactive.e-10451-box--padding-custom.e-10451-box--padding-block-start-custom.e-10451-box--padding-block-end-custom.e-10451-box--hover-custom.e-10451-box--min-size.e-10451-legacy-list-row.e-10451-legacy-list-row--has-leading.Z557o5iO1x0aSAXt.main-useDropTarget-base:hover,
+  .gpBiAnJHb1gq46qV,.yMgvi79CxA6kU0bR,.SMa1MaSqKoADr7I1,.main-nowPlayingView-artistOnTourItem:focus-within,
+  .main-nowPlayingView-artistOnTourItem:hover,.main-nowPlayingView-onTourTimeCard.WrTYC19GTA8avoBQ,dialog,
+  .main-trackCreditsModalV2-closeBtn,.EU1ylDKh7s2oMU0g,.VwcQJ4Zsf0JKD3Ls,.Q63Qxcm2ngQYyluw,.uu9s9Uba3tQf6ExH,
+  .KQDsZX3kwwuAFpE8,.main-nowPlayingView-actionButton,.k5cq5CRdOO8TaJlA:hover,.Root__now-playing-bar,
+  .main-connectBar-connectBar.main-connectBar-connected,.KFAJvMWTSagxYXGC,.JDUQ8zTo6EUgHoYt,.B9ji6YIpLSUHiyxx,
+  .GVOWlzcZSE5JbfWf,.gu0S9_98ZXIo5DaV,.SUjhgyMvTou7TddO,.mwk3Wc6l_icG6VO7:hover,.n5KI8mwa5o8qbn4b,
+  .vado7sbDrEsKhSmn,.main-topBar-background,.main-trackList-trackListHeader,.main-entityHeader-container,
+  .main-actionBar-ActionBar,.e-10451-legacy-chip__inner,.x-sortBox-sortDropdown,.f0DRpgeIxygEki9e,
+  .x-filterBox-filterInput,.main-contextMenu-tippy,.PromotionButtonTooltip-module_tooltip-animation__cE-rt,
+  .e-10451-chip-clear,.main-trackList-trackListRow.q8suB2R_XkoUyIeZ,.main-trackList-trackListRow:hover,
+  .main-editImageButton-image,.main-playlistEditDetailsModal-container,
+  .main-playlistEditDetailsModal-titleInput,.main-playlistEditDetailsModal-descriptionTextarea,
+  .main-playlistEditDetailsModal-imageDropDownButton,.main-playlistEditDetailsModal-closeBtn,
+  .main-card-cardContainer,.UP4sKQB2oWdHEMOE,.uJT7C8StdDMdgcva,.os-scrollbar-handle,.ERRo1Br0ZQtJYVhz,
+  .LR7w41pC8ccVc11Q,.VsYY0YB3c4lmhoDI,.YT5cYwULCoyD6pGh,.iaaQKMqcyZQBT9bn,.main-shelf-shelf,.cTnmA013TQbGR3SF,
+  .CO34wNPAbR8mpcdD,.JthDv0xUCm8rLhu6,.tlq9Tt69FX4bauLX,.x-settings-section,.main-dropDown-dropDown,
+  .GprrtSWlnCwoNzut,.x-settings-zoomContainer,.x-settings-equalizerSection,.x-settings-outputDeviceSection,
+  .x-settings-zoomButtonIconWrapper,.main-embedWidgetGenerator-container,.spicetify-exp-features input.search,
+  .InxeMZqTiY9YIYgh,.ezToExEhEDEdAkV4,.TguLwQ522LIEgpK_.IxVxBUbV5M5tGaEx,.HOf9H18Ya0DkJ4_K,.e-10451-tag,
+  .main-nowPlayingView-onTourItemGrid:hover,.main-nowPlayingView-onTourTimeCard,.mp57tCaTzo7_wVHK,
+  .HX8Y5HwR9P0JHU9S,.N3kf5S8O84aeaCZu,.spicetify-exp-features button.switch,.e-10451-box--elevated,
+  .Wzl40f9FIUD91O2o,.kPNLJ4R0r0LWySog,.ZnAo42EPyLw72WLD,.yXN52o27ZsCRQpNt:after,.x-entityImage-imageContainer,
+  .Htdd9HRV28F07Dwl,.KRcMJBwxHSMuQhZa,.p67WtOnm9lsRLOu2,.JLkvt5ABTQYw_rG7,.dyNR5Zzrff43h3r0,.mKvcoJ_veYlcHwOz,
+  .BIQHixxXGx0NzXS9,.U6mTgLEk5kVVRmKF,.tMcqYZ2om0nYbgrw,.ladI0V8GNBwaliFh:is(:hover,:focus-visible),
+  .yZCluNwEsPD2zYyY,.YYR31GkgSNQaEQIc:hover,
+  button.e-10451-legacy-button.e-10451-legacy-button-tertiary.e-10451-overflow-wrap-anywhere.e-10451-button-tertiary--icon-only-small.e-10451-button-tertiary--icon-only.e-10451-button-tertiary--text-subdued.encore-internal-color-text-subdued.KGKmD8XXCDYOhmAx,
+  .Hrce4GF4EEkPJdBI,.DGYls4SVbuwGxQhk,.JIoapLEXN1k37B2h,.EpfIE3glwAOGcNT6,
+  .main-contextMenu-menu.liquify-glass--before::before,.xamNkt5LX9o8aL1q.liquify-glass--before::before,
+  .main-contextMenu-menuItemButton:not([aria-checked=true]):focus,.main-contextMenu-menuItemButton:hover,
+  .main-contextMenu-menuItemButton[aria-expanded=true],.gke5k3GmXyE2J5Pm:hover>:first-child,.marketplace-header,
+  .marketplace-tabBar-active,.Dropdown-control,.marketplace-header-icon-button,.searchbar-bar,.Dropdown-menu,
+  .Dropdown-option.is-selected,.Dropdown-option:hover,.main-card-card,#marketplace-readme,
+  #marketplace-readme details,#marketplace-readme code,
+  .marketplace-grid .main-card-draggable .main-card-cardMetadata li.marketplace-card__tag,
+  .marketplace-grid .main-card-draggable .main-card-cardMetadata .marketplace-card__tags-more-btn,
+  .mTKn24eZtKM0ouGv:hover,.iq16tKI_q90F_cM1,.uAMtSVze_YEzqBxh,._kx6PbIX2n8MJzEV,.WuleKmKt7kwEObvJ,
+  .artist-artistDiscography-topBar.artist-artistDiscography-topBarScrolled,.oc3OomY6r9UoIEQ0,
+  .LayoutResizer__inline-end:after,.LayoutResizer__inline-start:after,.oReO3E1Df2odSFHX,.iNb3XBh2XIAzQhHc,
+  button.e-10451-legacy-button.e-10451-legacy-button-tertiary.e-10451-overflow-wrap-anywhere.e-10451-button-tertiary--icon-only-small.e-10451-button-tertiary--icon-only.encore-internal-color-text-base.encore-over-media-set.ke_VP4xHdoJFnTJT,
+  .main-trackCreditsModal-container,.iWVdKqonjP0bx_gM,
+  .main-yourLibraryX-libraryItemContainer .os-scrollbar-vertical:active .os-scrollbar-handle[data-group-by]:after,
+  .h0PQ8sOpdOAqPvpi:focus-within,.h0PQ8sOpdOAqPvpi:hover,.edvX5XPBIXITSQoH,.TGvpaalpJK0BKYYL,
+  .X8iDE4nRFc6Fz1ua:not(.iWYXfFRVugfeZGTY):hover,.o1ikq4AVMKwiMyZ8,.cMZUj2dVUwneYo6e,.xFmkDiiqFwn5W_mx:hover,
+  .e-10810-legacy-chip__inner,.e-10810-legacy-button-secondary,.e-10810-tab-item:hover,
+  .e-10810-legacy-box.e-10810-legacy-box--naked.e-10810-legacy-box--interactive.e-10810-legacy-box--padding-custom.e-10810-legacy-box--padding-block-start-custom.e-10810-legacy-box--padding-block-end-custom.e-10810-legacy-box--hover-custom.e-10810-legacy-box--min-size.e-10810-legacy-list-row.e-10810-legacy-list-row--has-leading.Z557o5iO1x0aSAXt.main-useDropTarget-base.main-useDropTarget-track.main-useDropTarget-local.main-useDropTarget-episode.kCuoeTp_4F8B1vXL.main-useDropTarget-album:hover,
+  .e-10810-legacy-box.e-10810-legacy-box--naked.e-10810-legacy-box--interactive.e-10810-legacy-box--padding-custom.e-10810-legacy-box--padding-block-start-custom.e-10810-legacy-box--padding-block-end-custom.e-10810-legacy-box--hover-custom.e-10810-legacy-box--min-size.e-10810-legacy-list-row.e-10810-legacy-list-row--has-leading.Z557o5iO1x0aSAXt.main-useDropTarget-base:hover,
+  .e-10810-legacy-box--tinted,.main-nowPlayingView-headerButton,.J3ndazz3tjkb4CYQ:before`;
+
   const shadowStyle = document.createElement('style');
   shadowStyle.id = ID + '-shadows';
   shadowStyle.textContent = `
     *, *::before, *::after { box-shadow: none !important; text-shadow: none !important; }
+
+    /* restore the specular rim (see note above) */
+    ${RIM} { box-shadow: var(--liquify-shadow) !important; }
+
     /* keep the cover-art drop shadow: it is a single small element and it is
        what gives the floating card its depth */
     .main-nowPlayingView-coverArt, .liquid-lyrics-song-card {

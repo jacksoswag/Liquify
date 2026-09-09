@@ -1,0 +1,60 @@
+/* Liquid Lyrics Headerless Card — Removes the Liquid Lyrics card's top bar (the icon and "Liquid Lyrics" title) and floats its controls over the top-right of the lyrics themselves, so the lyrics get the card's full height. */
+
+/* Never set `display` on .liquid-lyrics-sidebar-card or .liquid-lyrics-panel --
+   see liquid-lyrics-fill-npv.css for the failure that causes. Everything here
+   targets the header's own children by exact class, which is safe: none of
+   them is a container the app needs for layout elsewhere. */
+
+.liquid-lyrics-sidebar-card {
+  position: relative;
+}
+
+/* icon + "Liquid Lyrics" title */
+.liquid-lyrics-sidebar-card .ll-sidebar-header-main {
+  display: none !important;
+}
+
+/* the bar stops being a 54px layout row and becomes a floating overlay
+   pinned to the top-right corner of the card */
+.liquid-lyrics-sidebar-card > .ll-sidebar-card-header {
+  position: absolute !important;
+  top: 0;
+  right: 0;
+  left: auto;
+  width: auto !important;
+  height: auto !important;
+  min-height: 0 !important;
+  padding: 6px 8px !important;
+  margin: 0 !important;
+  z-index: 4;
+  display: flex !important;
+  align-items: center;
+  gap: 2px;
+  background: none !important;
+  border: 0 !important;
+  /* clicks fall through the empty part of the bar to the lyrics behind it */
+  pointer-events: none;
+}
+
+.liquid-lyrics-sidebar-card > .ll-sidebar-card-header > * {
+  pointer-events: auto;
+}
+
+/* lyrics reclaim the height the bar used to occupy */
+.liquid-lyrics-sidebar-card > .ll-sidebar-card-body {
+  height: 100% !important;
+  padding-top: 0 !important;
+}
+
+/* The controls now float over the lyrics, so they rest at low opacity and come
+   up on hover. This keeps the full 54px the header used to take instead of
+   giving most of it back as top padding. */
+.liquid-lyrics-sidebar-card > .ll-sidebar-card-header {
+  opacity: 0.45;
+  transition: opacity 0.18s ease;
+}
+
+.liquid-lyrics-sidebar-card:hover > .ll-sidebar-card-header,
+.liquid-lyrics-sidebar-card > .ll-sidebar-card-header:focus-within {
+  opacity: 1;
+}
