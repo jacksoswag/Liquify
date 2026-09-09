@@ -1,4 +1,4 @@
-/* Hide Library Chrome — Removes the sidebar back arrow, the library collapse/expand buttons and the Now Playing show/hide buttons, all of which are on keybinds (Cmd+Alt+Left, Alt+B, Alt+E, Alt+Shift+B). Makes Create an icon-only square button, and lets folder names use the width that frees up without a glass rim. */
+/* Hide Library Chrome — Removes the sidebar back arrow, the library collapse/expand buttons and the Now Playing show/hide buttons, all of which are on keybinds (Alt+Shift+Left, Alt+B, Alt+Shift+B). Makes Create an icon-only square button, and lets folder names use the width that frees up without a glass rim. */
 
 /* These stay in the DOM rather than being removed: liquify-keys.js drives them
    by clicking, and a display:none element still dispatches a click. */
@@ -108,4 +108,27 @@ html body .Root__nav-bar .main-yourLibraryX-collapseButton > *,
 html body .YourLibraryX:hover .main-yourLibraryX-collapseButton > *,
 html body .YourLibraryX:has(:focus-visible) .main-yourLibraryX-collapseButton > * {
   transform: none !important;
+}
+
+/* A filter row with a single option is not a filter -- there is nothing to
+   choose between, and inside a folder it renders as one lonely "By you" chip
+   above the list. The whole .main-yourLibraryX-filterArea goes rather than the
+   listbox inside it, so its 8px margins go too and the list closes the gap.
+
+   Read as: hide unless some option has another option after it. Options are
+   direct children of the listbox here, so the sibling combinator is an exact
+   count test without needing to count. Chips this setup hides by name (see
+   liquify-ui-tweaks) are excluded, or a row holding one real chip plus a hidden
+   Podcasts chip would look like two and stay. */
+.main-yourLibraryX-filterArea:not(:has(
+    [role="option"]:not([data-lqx-hidden]) ~ [role="option"]:not([data-lqx-hidden]))) {
+  display: none !important;
+}
+
+/* Same rule for any other filter row of this shape that is not inside the
+   library's filter area -- scoped to the "Filter options" label so it cannot
+   reach a real single-item dropdown somewhere else in the app. */
+[role="listbox"][aria-label="Filter options"]:not(:has(
+    [role="option"]:not([data-lqx-hidden]) ~ [role="option"]:not([data-lqx-hidden]))) {
+  display: none !important;
 }

@@ -235,8 +235,6 @@
     ['alt',       'KeyL',       'Toggle lyrics',              toggleLyrics],
     ['alt',       'KeyB',       'Toggle left sidebar',        toggleLeftSidebar],
     ['alt+shift', 'KeyB',       'Toggle right sidebar',       toggleRightSidebar],
-    ['alt',       'KeyE',       'Expand / collapse library',  () =>
-                                  clickByLabel('Collapse Your Library', 'Expand Your Library')],
     ['alt',       'KeyF',       'Friend activity',            () => clickByLabel('Listening activity')],
     ['alt+shift', 'KeyF',       'Search in library',          () => clickByLabel('Search in Your Library')],
     ['alt',       'KeyD',       'Connect to a device',        () => clickByLabel('Connect to a device')],
