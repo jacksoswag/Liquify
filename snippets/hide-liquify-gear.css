@@ -1,0 +1,8 @@
+/* Hide Liquify Gear Button — Removes the Liquify settings gear from the top bar. Its settings now live in the merged settings menu, opened from the Liquid Lyrics settings button (or Alt+,). */
+
+/* display:none rather than removing it: liquify-ui-tweaks still clicks this
+   button programmatically to open Liquify's own panel for the "Liquify" tab,
+   and .click() works fine on a hidden element. */
+#liquify-settings-gear-btn {
+  display: none !important;
+}

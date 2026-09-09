@@ -1,0 +1,5 @@
+/* Hide Marketplace Icon — Removes the Marketplace button from the top bar. Marketplace is still reachable at Alt+M. */
+
+.Root__globalNav button[aria-label="Marketplace"] {
+  display: none !important;
+}

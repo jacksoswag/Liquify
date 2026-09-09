@@ -128,5 +128,93 @@
     enable() { localStorage.removeItem(LL_OFF_KEY); return 'auto-repair on'; },
   };
 
+
+  // ---- open in fullscreen ----
+  //
+  // Spotify ignores --start-fullscreen (verified: the window comes back in
+  // "normal" state), and Spicetify's spotify_launch_flags are only applied when
+  // Spicetify itself launches the client, not when it is opened from the Dock.
+  // The only path left from inside the app is the HTML fullscreen API, and that
+  // is gated on a user gesture -- calling it at boot fails with "Permissions
+  // check failed". So it is armed here and fires on the first click or keypress
+  // after launch, which in practice is the first thing the user does anyway.
+  const FS_KEY = 'liquify-open-fullscreen';   // 'on' | 'off' (default off)
+  if (localStorage.getItem(FS_KEY) === 'on') {
+    const goFull = () => {
+      window.removeEventListener('pointerdown', goFull, true);
+      window.removeEventListener('keydown', goFull, true);
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen?.().catch(() => {});
+      }
+    };
+    window.addEventListener('pointerdown', goFull, true);
+    window.addEventListener('keydown', goFull, true);
+  }
+  window.liquifyFullscreen = {
+    enable() { localStorage.setItem(FS_KEY, 'on'); return 'on next launch, after your first click'; },
+    disable() { localStorage.setItem(FS_KEY, 'off'); return 'off'; },
+    now() { return document.documentElement.requestFullscreen?.(); },
+  };
+
+  // ---- one settings menu ----
+  //
+  // Liquify and Liquid Lyrics each render their own settings panel, both React,
+  // both mounted in their own overlay. Physically moving one panel's DOM into
+  // the other's tree means React can patch or unmount a node that no longer
+  // lives where it thinks it does, so instead both keep their own panel and
+  // this puts a two-tab switcher at the top of each. One entry point (Liquid
+  // Lyrics' settings button), one menu position, either product's real panel.
+  const LL_PANEL = '.ll-settings-panel';
+  const LQ_PANEL = '.liquifySettingsPanel';
+  const LQ_OVERLAY = '#liquify-settings-react-overlay';
+
+  const lqOpen = () => !!document.querySelector(LQ_PANEL);
+  const llOpen = () => !!document.querySelector(LL_PANEL);
+
+  const closeLiquify = () => { if (lqOpen()) document.getElementById('liquify-settings-gear-btn')?.click(); };
+  const closeLyrics = () => { if (llOpen()) document.querySelector('.ll-settings-overlay')?.querySelector('.ll-settings-close, [aria-label*="lose"]')?.click(); };
+
+  function buildTabs(active) {
+    const bar = document.createElement('div');
+    bar.className = 'lqx-settings-tabs';
+    for (const [key, label] of [['lyrics', 'Lyrics'], ['liquify', 'Liquify']]) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'lqx-settings-tab' + (key === active ? ' active' : '');
+      b.textContent = label;
+      b.addEventListener('click', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        if (key === active) return;
+        if (key === 'liquify') { document.getElementById('liquify-settings-gear-btn')?.click(); closeLyrics(); }
+        else { closeLiquify(); document.querySelector('.ll-settings-btn')?.click(); }
+      });
+      bar.appendChild(b);
+    }
+    return bar;
+  }
+
+  function decorate() {
+    const ll = document.querySelector(LL_PANEL);
+    if (ll && !ll.querySelector('.lqx-settings-tabs')) ll.prepend(buildTabs('lyrics'));
+    const lq = document.querySelector(LQ_PANEL);
+    if (lq && !lq.querySelector('.lqx-settings-tabs')) lq.prepend(buildTabs('liquify'));
+  }
+  new MutationObserver(decorate).observe(document.body, { childList: true, subtree: true });
+  decorate();
+
+  const settingsStyle = document.createElement('style');
+  settingsStyle.id = 'lqx-settings-merge-style';
+  settingsStyle.textContent = `
+    .lqx-settings-tabs{display:flex;gap:6px;padding:4px 4px 10px;justify-content:center}
+    .lqx-settings-tab{appearance:none;border:0;cursor:pointer;padding:5px 16px;border-radius:999px;
+      font:600 12px -apple-system,system-ui,sans-serif;color:rgba(255,255,255,.7);
+      background:rgba(255,255,255,.08);transition:background .16s ease,color .16s ease}
+    .lqx-settings-tab:hover{background:rgba(255,255,255,.14);color:#fff}
+    .lqx-settings-tab.active{background:rgba(255,255,255,.22);color:#fff}
+    /* Liquify's overlay is positioned for its own gear; centre it like the
+       lyrics panel so the two tabs land in the same place on screen */
+    ${LQ_OVERLAY} ${LQ_PANEL}{margin:0 auto}`;
+  document.head.appendChild(settingsStyle);
+
   window.liquifyUiTweaks = { sweep, HIDE_CHIPS };
 })();

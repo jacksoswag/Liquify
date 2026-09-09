@@ -46,5 +46,13 @@
  "hide-home-button": {
   "title": "Hide Home Button",
   "description": "Removes the Home button from the top bar."
+ },
+ "hide-liquify-gear": {
+  "title": "Hide Liquify Gear Button",
+  "description": "Removes the Liquify settings gear from the top bar; its settings moved into the merged menu on the Liquid Lyrics settings button (or Alt+,)."
+ },
+ "hide-marketplace-icon": {
+  "title": "Hide Marketplace Icon",
+  "description": "Removes the Marketplace button from the top bar; still reachable at Alt+M."
  }
 }

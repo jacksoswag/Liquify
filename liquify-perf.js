@@ -23,6 +23,11 @@
 (function liquifyPerf() {
   const NS = 'http://www.w3.org/2000/svg';
   const ID = 'lqx';
+  // Linear downscale factor of the album-background layer. Declared here
+  // rather than beside the background code because buildDriftFilter() runs
+  // during setup and needs it -- referencing it later put it in the temporal
+  // dead zone and threw at boot, which killed the whole extension silently.
+  const BG_SCALE = 4;
   const PERF_KEY = 'liquify-perf-mode';
 
   if (!document.body) return setTimeout(liquifyPerf, 300);
@@ -83,68 +88,21 @@
   defs.appendChild(buildFilter(ID + '-hi', { scale: -80, chroma: true,  href: map, post: 0.2 }));
   defs.appendChild(buildFilter(ID + '-lo', { scale: -80, chroma: false, href: map, post: 0 }));
 
-  // ---- evolving "drift" distortion on the album background ----
+  // ---- the evolving background lives in liquify-fabric-bg.js ----
   //
-  // A slow, non-repeating global warp, in the spirit of the Drift screensaver:
-  // no visible swirl centre, just the whole image breathing.
+  // It used to be an SVG displacement filter layered over the background here.
+  // That was wrong at two levels and is kept out of this file now:
   //
-  // Why this is affordable when the theme's other filters were not: the
-  // background layer is now rendered into a ~317x231 backing store (see below),
-  // so the displacement pass covers ~73k px, not the 1.17M px it used to. And
-  // crucially the noise field is a STATIC raster - generated once here - that is
-  // merely *translated* by an animated feOffset. Translating a cached texture is
-  // nearly free, whereas animating feTurbulence's baseFrequency would re-evaluate
-  // procedural noise per pixel per frame, which is exactly the kind of work that
-  // made the original theme expensive.
+  //   * `feTurbulence` as the displacement map measured 80 GPU points (15% ->
+  //     95%, 6 paired cycles) because procedural noise is re-synthesised per
+  //     pixel per frame.
+  //   * More fundamentally, post-processing the rendered layer was the wrong
+  //     place to work. The layer is already downscaled, blurred and dimmed, so
+  //     warping it moved the mean pixel value by 1.3% -- measured, invisible.
   //
-  // Two feOffset animations with coprime-ish periods (47s / 61s) means the pair
-  // does not revisit the same offset for ~48 minutes, so it never visibly loops.
-
-  // Displacement offset is `scale * (channel/255 - 0.5)`. Blurring random noise
-  // pulls every channel toward the 128 mid-point, i.e. toward ZERO displacement
-  // -- the first version of this was invisible for exactly that reason. So after
-  // smoothing we contrast-stretch each channel back to the full 0..255 range,
-  // which restores amplitude while keeping the field smooth.
-  function noiseTexture(size, cell, blurPx) {
-    const small = document.createElement('canvas');
-    small.width = small.height = cell;
-    const sx = small.getContext('2d');
-    const img = sx.createImageData(cell, cell);
-    for (let i = 0; i < cell * cell; i++) {
-      img.data[i * 4 + 0] = Math.random() * 255;   // R -> x displacement
-      img.data[i * 4 + 1] = Math.random() * 255;   // G -> y displacement
-      img.data[i * 4 + 2] = 128;
-      img.data[i * 4 + 3] = 255;
-    }
-    sx.putImageData(img, 0, 0);
-    const mid = document.createElement('canvas');
-    mid.width = mid.height = size;
-    const mx = mid.getContext('2d');
-    mx.imageSmoothingEnabled = true;
-    mx.imageSmoothingQuality = 'high';
-    mx.drawImage(small, 0, 0, size, size);
-    const out = document.createElement('canvas');
-    out.width = out.height = size;
-    const ox = out.getContext('2d');
-    if (blurPx > 0) ox.filter = `blur(${blurPx}px)`;
-    ox.drawImage(mid, 0, 0);
-    ox.filter = 'none';
-    const d = ox.getImageData(0, 0, size, size);
-    let lo = [255, 255], hi = [0, 0];
-    for (let i = 0; i < d.data.length; i += 4)
-      for (let c = 0; c < 2; c++) {
-        const v = d.data[i + c];
-        if (v < lo[c]) lo[c] = v;
-        if (v > hi[c]) hi[c] = v;
-      }
-    for (let i = 0; i < d.data.length; i += 4)
-      for (let c = 0; c < 2; c++) {
-        const span = Math.max(1, hi[c] - lo[c]);
-        d.data[i + c] = Math.max(0, Math.min(255, ((d.data[i + c] - lo[c]) / span) * 255));
-      }
-    ox.putImageData(d, 0, 0);
-    return out.toDataURL('image/png');
-  }
+  // The album art is now deformed at the source by a fragment shader, in
+  // liquify-fabric-bg.js. The drift strength/speed keys below are still written
+  // by the sliders in Liquify's settings panel and are read by that extension.
 
   // ---- drift settings (persisted; also exposed in Liquify's settings panel) ----
   const CHROMA_KEY = 'liquify-glass-chromatic';          // 'on' | 'off'
@@ -153,52 +111,9 @@
   const DRIFT_SPEED_KEY    = 'liquify-drift-speed';      // 1-100, higher = faster
   const readNum = (k, dflt) => { const v = parseFloat(localStorage.getItem(k)); return Number.isFinite(v) ? v : dflt; };
   const driftCfg = () => ({
-    strength: Math.max(0, Math.min(100, readNum(DRIFT_STRENGTH_KEY, 0))),
+    strength: Math.max(0, Math.min(100, readNum(DRIFT_STRENGTH_KEY, 35))),
     speed:    Math.max(1, Math.min(100, readNum(DRIFT_SPEED_KEY, 65))),
   });
-
-  const DRIFT_ID = ID + '-drift';
-  const NOISE_HREF = noiseTexture(320, 9, 3);
-
-  function buildDriftFilter() {
-    const { strength, speed } = driftCfg();
-    // The layer is drawn at 1/BG_SCALE and scaled back up, so displacement in
-    // this space is multiplied by BG_SCALE on screen. strength 100 ~ 100px.
-    const scale = (strength / 100) * (100 / 4);
-    const base = 150 - speed;            // seconds; two coprime-ish periods
-    const f = fe('filter', { id: DRIFT_ID, 'color-interpolation-filters': 'sRGB',
-                             x: '-15%', y: '-15%', width: '130%', height: '130%' });
-    const img = fe('feImage', { x: '-15%', y: '-15%', width: '130%', height: '130%',
-                                preserveAspectRatio: 'none', result: 'noise' });
-    img.setAttribute('href', NOISE_HREF);
-    img.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', NOISE_HREF);
-    f.appendChild(img);
-    const off = fe('feOffset', { in: 'noise', dx: '0', dy: '0', result: 'drift' });
-    const anim = (attr, values, dur) => {
-      const a = document.createElementNS(NS, 'animate');
-      a.setAttribute('attributeName', attr);
-      a.setAttribute('values', values);
-      a.setAttribute('dur', dur + 's');
-      a.setAttribute('repeatCount', 'indefinite');
-      a.setAttribute('calcMode', 'spline');
-      a.setAttribute('keyTimes', '0;0.33;0.66;1');
-      a.setAttribute('keySplines', '.45 0 .55 1;.45 0 .55 1;.45 0 .55 1');
-      return a;
-    };
-    off.appendChild(anim('dx', '0;26;-21;0', Math.round(base * 0.78)));
-    off.appendChild(anim('dy', '0;-19;24;0', Math.round(base)));
-    f.appendChild(off);
-    f.appendChild(fe('feDisplacementMap', { in: 'SourceGraphic', in2: 'drift',
-      scale: String(scale.toFixed(1)), xChannelSelector: 'R', yChannelSelector: 'G' }));
-    return f;
-  }
-  defs.appendChild(buildDriftFilter());
-
-  function rebuildDrift() {
-    document.getElementById(DRIFT_ID)?.remove();
-    defs.appendChild(buildDriftFilter());
-    applyBgStyle();
-  }
 
   host.appendChild(defs);
   document.body.appendChild(host);
@@ -240,12 +155,10 @@
   // and the upscale filtering contributes softening of its own. Visually
   // indistinguishable at this blur radius.
 
-  const BG_SCALE = 4;
   const bgStyle = document.createElement('style');
   bgStyle.id = ID + '-bg';
   document.head.appendChild(bgStyle);
   function applyBgStyle() {
-    const on = driftCfg().strength > 0;
     // 27vw/27vh (not 25) gives overscan so drift never pulls transparent pixels
     // in from outside the layer's own bounds.
     bgStyle.textContent = `
@@ -258,7 +171,7 @@
         bottom: auto !important;
         transform: scale(${BG_SCALE}) !important;
         transform-origin: 0 0 !important;
-        filter: ${on ? `url(#${DRIFT_ID}) ` : ''}blur(${(7 / BG_SCALE).toFixed(2)}px) brightness(0.45) !important;
+        filter: blur(${(7 / BG_SCALE).toFixed(2)}px) brightness(0.45) !important;
       }
       html.liquify-perf .liquify-bg-layer {
         width: ${(100 / (BG_SCALE * 2)) + 2}vw !important;
@@ -460,7 +373,7 @@
         const which = input.getAttribute('data-lqx');
         wrap.querySelector(`[data-lqx-out="${which}"]`).textContent = input.value;
         localStorage.setItem(which === 'strength' ? DRIFT_STRENGTH_KEY : DRIFT_SPEED_KEY, input.value);
-        rebuildDrift();
+        applyBgStyle();
       });
     }
   }
@@ -483,12 +396,12 @@
     set(strength, speed) {
       if (strength != null) localStorage.setItem(DRIFT_STRENGTH_KEY, String(strength));
       if (speed != null) localStorage.setItem(DRIFT_SPEED_KEY, String(speed));
-      rebuildDrift();
+      applyBgStyle();
       return driftCfg();
     },
   };
 
-  // ---- perf mode: cmd+P / ctrl+P ----
+  // ---- perf mode (bound to Alt+Shift+P in liquify-keys.js) ----
   const setPerf = (on) => {
     document.documentElement.classList.toggle('liquify-perf', on);
     try { localStorage.setItem(PERF_KEY, on ? 'on' : 'off'); } catch {}
@@ -497,12 +410,13 @@
   };
   setPerf(localStorage.getItem(PERF_KEY) === 'on');
 
-  window.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'p' || e.key === 'P')) {
-      e.preventDefault(); e.stopPropagation();
-      setPerf(!document.documentElement.classList.contains('liquify-perf'));
-    }
-  }, true);
+  // The keybinding itself now lives in liquify-keys.js (Alt+Shift+P), because
+  // Cmd+P was reassigned to "add track to playlist". Keeping the binding in one
+  // file means the two can never disagree about which chord owns what; this
+  // side just exposes the toggle.
+  window.addEventListener('lqx-toggle-perf', () => {
+    setPerf(!document.documentElement.classList.contains('liquify-perf'));
+  });
 
 
   // ---- dead backdrop-filter elimination ----
