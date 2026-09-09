@@ -311,45 +311,6 @@
   Spicetify.Player.addEventListener('songchange', restoreFriends);
   setTimeout(showFriends, 1500);   // and make it the default on the way in
 
-  // ---- pointer sampler ----
-  //
-  // Records where the page thought the pointer was for the last few real
-  // mousedowns, alongside where the OS said it was. One write per click, no
-  // mousemove listener, so it costs nothing.
-  //
-  // This exists because the two coordinate spaces can only be compared using an
-  // event that came from an actual mouse. Events injected over the debugging
-  // protocol enter below the OS-to-renderer conversion, which is why every
-  // injected click landed on the button while real ones miss -- the conversion
-  // itself is what is suspect, and it cannot be observed from this side.
-  //
-  //   delta = (screenX - window.screenX) - clientX
-  //
-  // Zero means the spaces agree. A constant means the window's content origin
-  // is misplaced. A value that grows with position means a scale mismatch --
-  // the likely one here, given a fractional devicePixelRatio.
-  const SAMPLE_KEY = 'liquify-pointer-samples';
-  document.addEventListener('mousedown', (e) => {
-    try {
-      const el = document.elementFromPoint(e.clientX, e.clientY);
-      const t = el?.closest?.('button, a, [role="button"]') || el;
-      const r = t?.getBoundingClientRect?.();
-      const prev = JSON.parse(localStorage.getItem(SAMPLE_KEY) || '[]');
-      prev.push({
-        cx: Math.round(e.clientX), cy: Math.round(e.clientY),
-        sx: Math.round(e.screenX), sy: Math.round(e.screenY),
-        wx: window.screenX, wy: window.screenY,
-        dx: Math.round((e.screenX - window.screenX) - e.clientX),
-        dy: Math.round((e.screenY - window.screenY) - e.clientY),
-        dpr: devicePixelRatio, iw: innerWidth, ih: innerHeight,
-        ow: outerWidth, oh: outerHeight,
-        el: (t?.getAttribute?.('aria-label') || t?.tagName || '?').slice(0, 28),
-        box: r ? [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)] : null,
-      });
-      localStorage.setItem(SAMPLE_KEY, JSON.stringify(prev.slice(-25)));
-    } catch { /* never let diagnostics break a click */ }
-  }, true);
-
   // ---- pointer probe (Alt+Shift+D) ----
   //
   // For the class of bug where a control's visual and its clickable area
