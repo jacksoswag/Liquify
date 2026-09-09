@@ -324,31 +324,45 @@
   // panel's classes so it matches. Values persist in localStorage and rebuild
   // the filter live.
   const SETTINGS_MARK = 'data-lqx-drift-ui';
+  // Written here, read by liquify-fabric-bg.js on its next frame -- no rebuild
+  // step, so the sliders are live.
+  const FABRIC = {
+    strength: { key: 'liquify-drift-strength', label: 'Distortion', min: 0, max: 100, dflt: 70 },
+    speed:    { key: 'liquify-drift-speed',    label: 'Motion speed', min: 1, max: 100, dflt: 45 },
+    blur:     { key: 'liquify-fabric-blur',    label: 'Blur', min: 0, max: 160, dflt: 38 },
+    fps:      { key: 'liquify-fabric-fps',     label: 'Frame rate', min: 10, max: 60, dflt: 60 },
+  };
+  const fabricVal = (k) => {
+    const s = FABRIC[k], v = parseFloat(localStorage.getItem(s.key));
+    return Number.isFinite(v) ? Math.max(s.min, Math.min(s.max, v)) : s.dflt;
+  };
+
   function buildDriftUI(panel) {
     if (panel.querySelector(`[${SETTINGS_MARK}]`)) return;
-    const cfg = driftCfg();
     const wrap = document.createElement('div');
     wrap.setAttribute(SETTINGS_MARK, '1');
     wrap.style.cssText = 'padding:14px 4px 4px;border-top:1px solid rgba(255,255,255,.12);margin-top:14px';
+    const row = (k) => {
+      const s = FABRIC[k], v = fabricVal(k);
+      return `
+      <label style="display:flex;align-items:center;gap:10px;margin:8px 0;font:400 12px/1 inherit;opacity:.85">
+        <span style="min-width:82px">${s.label}</span>
+        <input type="range" min="${s.min}" max="${s.max}" step="1" value="${v}" data-lqx="${k}" style="flex:1">
+        <span data-lqx-out="${k}" style="min-width:30px;text-align:right;opacity:.7">${v}</span>
+      </label>`;
+    };
     wrap.innerHTML = `
       <div style="font:600 13px/1.4 var(--liquify-font,inherit);opacity:.9;margin-bottom:10px">
-        Background drift
+        Background
         <div style="font:400 11px/1.4 inherit;opacity:.55;margin-top:3px">
-          Slow evolving distortion of the album background. Measured at ~21 GPU
-          points at strength 55 -- more than every other optimisation here saves
-          combined, so it ships off. 0 disables it entirely.
+          The album art is deformed by a continuous per-pixel warp, like a sheet
+          of fabric hauled from shifting points along its edges. Distortion 0
+          turns it off and restores the plain background. Frame rate is the cost
+          dial: a moving backdrop forces every glass panel above it to
+          recomposite, so halving it roughly halves what this costs.
         </div>
       </div>
-      <label style="display:flex;align-items:center;gap:10px;margin:8px 0;font:400 12px/1 inherit;opacity:.85">
-        <span style="min-width:62px">Strength</span>
-        <input type="range" min="0" max="100" step="1" value="${cfg.strength}" data-lqx="strength" style="flex:1">
-        <span data-lqx-out="strength" style="min-width:28px;text-align:right;opacity:.7">${cfg.strength}</span>
-      </label>
-      <label style="display:flex;align-items:center;gap:10px;margin:8px 0;font:400 12px/1 inherit;opacity:.85">
-        <span style="min-width:62px">Speed</span>
-        <input type="range" min="1" max="100" step="1" value="${cfg.speed}" data-lqx="speed" style="flex:1">
-        <span data-lqx-out="speed" style="min-width:28px;text-align:right;opacity:.7">${cfg.speed}</span>
-      </label>`;
+      ${row('strength')}${row('speed')}${row('blur')}${row('fps')}`;
     const chroma = document.createElement('div');
     chroma.style.cssText = 'margin-top:14px';
     chroma.innerHTML = `
@@ -372,7 +386,8 @@
       input.addEventListener('input', () => {
         const which = input.getAttribute('data-lqx');
         wrap.querySelector(`[data-lqx-out="${which}"]`).textContent = input.value;
-        localStorage.setItem(which === 'strength' ? DRIFT_STRENGTH_KEY : DRIFT_SPEED_KEY, input.value);
+        localStorage.setItem(FABRIC[which].key, input.value);
+        window.liquifyFabric?.set({ [which]: parseFloat(input.value) });
         applyBgStyle();
       });
     }

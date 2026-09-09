@@ -29,18 +29,37 @@
 (function liquifyFabricBg() {
   if (!window.Spicetify?.Player?.data || !document.body) return setTimeout(liquifyFabricBg, 400);
 
-  const STRENGTH_KEY = 'liquify-drift-strength';   // shared with Liquify's sliders
-  const SPEED_KEY = 'liquify-drift-speed';
+  const STRENGTH_KEY = 'liquify-drift-strength';   // "Distortion" in the panel
+  const SPEED_KEY = 'liquify-drift-speed';         // "Motion speed"
+  const BLUR_KEY = 'liquify-fabric-blur';          // "Blur"
+  const FPS_KEY = 'liquify-fabric-fps';            // "Frame rate"
   const num = (k, d) => { const v = parseFloat(localStorage.getItem(k)); return Number.isFinite(v) ? v : d; };
   const cfg = () => ({
-    strength: Math.max(0, Math.min(100, num(STRENGTH_KEY, 65))),
-    speed: Math.max(1, Math.min(100, num(SPEED_KEY, 65))),
+    strength: Math.max(0, Math.min(100, num(STRENGTH_KEY, 70))),
+    speed: Math.max(1, Math.min(100, num(SPEED_KEY, 45))),
+    blur: Math.max(0, Math.min(160, num(BLUR_KEY, 38))),
+    fps: Math.max(10, Math.min(60, num(FPS_KEY, 60))),
   });
 
-  const RES = 5;      // render at 1/5 viewport; the result is unreadable anyway
-  const BLUR = 26;    // effective blur in screen pixels
-  const FPS = 12;     // the real cost dial -- see the note above
+  // 1/4 viewport. Lower than this and the blur has too little structure left to
+  // work with -- at 1/6 with a 70px blur the frame went to flat black with a
+  // faint glow, which is not "unreadable", it is "gone".
+  const RES = 4;
   const GRIPS = 3;
+
+  // Sampling headroom. The warp pushes texture coordinates outside 0..1, and
+  // what happens there is the whole question. MIRRORED_REPEAT reflects the
+  // cover, which reads as an obvious tile -- that was the "it just looks like
+  // the image tiled" problem. Zooming hard into the middle avoids ever reaching
+  // the edge but magnifies the art past recognition.
+  //
+  // So: no zoom at all -- a plain cover fit, the cover at its natural framing --
+  // and CLAMP_TO_EDGE for whatever the pull drags past the border. Clamping
+  // smears the edge pixel outward instead of reflecting a copy of the picture,
+  // and under this much blur that smear is indistinguishable from the image
+  // simply continuing, whereas a mirrored tile stays recognisable however
+  // blurred it gets.
+  const ZOOM = 1.0;
 
   const canvas = document.createElement('canvas');
   canvas.id = 'lqx-fabric';
@@ -49,12 +68,21 @@
 
   const style = document.createElement('style');
   style.id = 'lqx-fabric-style';
-  style.textContent = `
-    #lqx-fabric{position:fixed;inset:0;width:100%;height:100%;z-index:0;
-      pointer-events:none;filter:blur(${(BLUR / RES).toFixed(2)}px) brightness(.45)}
-    html.lqx-fabric-on .liquify-bg-layer{display:none!important}
-    html.liquify-perf #lqx-fabric{filter:blur(${(BLUR / RES / 2).toFixed(2)}px) brightness(.45)}`;
   document.head.appendChild(style);
+  // NOTE: the canvas element is laid out at the full viewport size (its backing
+  // store is smaller and upscaled), and a CSS filter operates on the element's
+  // rendered box -- so this radius is already in screen pixels. An earlier
+  // version divided it by RES and wondered why nothing looked blurred.
+  let lastBlur = -1;
+  function applyBlur(px) {
+    if (px === lastBlur) return;
+    lastBlur = px;
+    style.textContent = `
+      #lqx-fabric{position:fixed;inset:0;width:100%;height:100%;z-index:0;
+        pointer-events:none;filter:blur(${px.toFixed(1)}px) brightness(.45)}
+      html.lqx-fabric-on .liquify-bg-layer{display:none!important}
+      html.liquify-perf #lqx-fabric{filter:blur(${(px / 2).toFixed(1)}px) brightness(.45)}`;
+  }
 
   // ---- shader ----
   const VS = `#version 300 es
@@ -69,6 +97,8 @@
   uniform sampler2D uA, uB;
   uniform float uMix, uT, uAmp;
   uniform vec2 uCover;
+  uniform float uZoom;
+  uniform vec2 uMean;             // frame-average pull, subtracted below
   uniform vec4 uGrip[${GRIPS}];   // xy = grip point, zw = pull direction
   uniform vec2 uGW[${GRIPS}];     // x = weight, y = reach
 
@@ -89,8 +119,13 @@
   }
 
   void main(){
-    vec2 uv = vUv + pull(vUv);
-    vec2 t = (uv-0.5)*uCover + 0.5;   // cover-fit the square cover to the frame
+    // Subtracting the frame average makes the field mean-zero, i.e. pure
+    // stretch with no net translation. Without this the summed directional
+    // pulls drag the whole frame off the texture, everything outside gets
+    // clamp-filled with the edge pixel, and the result is a flat smear with no
+    // composition left -- which is precisely how the first version looked.
+    vec2 uv = vUv + (pull(vUv) - uMean);
+    vec2 t = (uv-0.5)*uCover*uZoom + 0.5;   // cover-fit, zoomed in for headroom
     outColor = mix(texture(uA,t), texture(uB,t), uMix);
   }`;
 
@@ -108,22 +143,26 @@
   gl.useProgram(prog);
   const U = (n) => gl.getUniformLocation(prog, n);
   const uni = { A: U('uA'), B: U('uB'), mix: U('uMix'), t: U('uT'), amp: U('uAmp'),
-                cover: U('uCover'), grip: U('uGrip'), gw: U('uGW') };
+                cover: U('uCover'), zoom: U('uZoom'), mean: U('uMean'),
+                grip: U('uGrip'), gw: U('uGW') };
   gl.uniform1i(uni.A, 0); gl.uniform1i(uni.B, 1);
 
   const mkTex = () => {
     const t = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, t);
-    // MIRRORED_REPEAT is what lets the sheet be pulled past its own edges: the
-    // image reflects at each border, which joins seamlessly.
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.MIRRORED_REPEAT);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.MIRRORED_REPEAT);
+    // see the ZOOM note: clamping smears, mirroring tiles, and a smear hides
+    // under the blur while a tile does not
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
                   new Uint8Array([0, 0, 0, 255]));
     return t;
   };
+  // WebGL's texture origin is bottom-left, but an HTML image's first row is its
+  // TOP row, so an unflipped upload renders the cover upside down.
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
   const texA = mkTex(), texB = mkTex();
   let mixv = 0, haveArt = false;
 
@@ -192,6 +231,33 @@
     return [g, w];
   }
 
+  // Mirrors the shader's pull() so the frame average can be subtracted. Kept
+  // deliberately adjacent to the GLSL above: if one changes, so must the other.
+  function pullAt(px, py, g, w, t, amp) {
+    let dx = 0, dy = 0;
+    for (let i = 0; i < GRIPS; i++) {
+      const qx = px - g[i * 4], qy = py - g[i * 4 + 1];
+      const r = w[i * 2 + 1];
+      const k = Math.exp(-((qx * qx + qy * qy) / (r * r)) * 2.2) * w[i * 2];
+      dx += g[i * 4 + 2] * k; dy += g[i * 4 + 3] * k;
+    }
+    dx += 0.18 * Math.sin(py * 2.3 + t * 0.21);
+    dy += 0.18 * Math.cos(px * 1.9 - t * 0.17);
+    dx += 0.12 * Math.cos(px * 1.3 - t * 0.13);
+    dy += 0.12 * Math.sin(py * 1.1 + t * 0.11);
+    return [dx * amp, dy * amp];
+  }
+  function meanPull(g, w, t, amp) {
+    let sx = 0, sy = 0, n = 0;
+    for (let i = 0; i <= 8; i++) {
+      for (let j = 0; j <= 8; j++) {
+        const [dx, dy] = pullAt(i / 8, j / 8, g, w, t, amp);
+        sx += dx; sy += dy; n++;
+      }
+    }
+    return [sx / n, sy / n];
+  }
+
   // ---- loop ----
   let last = 0, running = false;
   function resize() {
@@ -206,12 +272,17 @@
   function frame(now) {
     if (!running) return;
     requestAnimationFrame(frame);
-    const { strength, speed } = cfg();
+    const { strength, speed, blur, fps } = cfg();
     if (document.hidden || strength <= 0 || !haveArt) return;
-    if (now - last < 1000 / FPS) return;
+    if (now - last < 1000 / fps) return;
     last = now;
     resize();
-    const t = now / 1000 * (speed / 65);
+    applyBlur(blur);
+    // Time base. At the default this puts a grip cycle around two minutes and
+    // the background swell around 75s -- slow enough that you never catch it
+    // moving, fast enough that the frame is visibly different if you look away
+    // and back. 0.30 here was 15x too slow: a grip took 12 minutes to complete.
+    const t = now / 1000 * (speed / 100) * 0.9;
     const [g, w] = gripUniforms(t);
     const A = canvas.width / canvas.height;
     gl.useProgram(prog);
@@ -220,8 +291,12 @@
     mixv += Math.max(-1, Math.min(1, fadeTo - mixv)) * 0.06;   // crossfade on track change
     gl.uniform1f(uni.mix, mixv);
     gl.uniform1f(uni.t, t);
-    gl.uniform1f(uni.amp, (strength / 100) * 0.85);
+    const amp = (strength / 100) * 0.55;
+    gl.uniform1f(uni.amp, amp);
+    const [mx, my] = meanPull(g, w, t, amp);
+    gl.uniform2f(uni.mean, mx, my);
     gl.uniform2f(uni.cover, 1, 1 / A);
+    gl.uniform1f(uni.zoom, ZOOM);
     gl.uniform4fv(uni.grip, g);
     gl.uniform2fv(uni.gw, w);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -241,15 +316,15 @@
     if (on && !running) { running = true; resize(); requestAnimationFrame(frame); }
     if (!on) running = false;
   }
-  const boot = () => { if (!mount()) return setTimeout(boot, 600); resize(); apply(); };
+  const boot = () => { if (!mount()) return setTimeout(boot, 600); resize(); applyBlur(cfg().blur); apply(); };
   boot();
   setInterval(() => { mount(); apply(); }, 2000);
 
   window.liquifyFabric = {
     canvas, cfg,
-    set: (strength, speed) => {
-      if (strength != null) localStorage.setItem(STRENGTH_KEY, String(strength));
-      if (speed != null) localStorage.setItem(SPEED_KEY, String(speed));
+    set: (o = {}) => {
+      const map = { strength: STRENGTH_KEY, speed: SPEED_KEY, blur: BLUR_KEY, fps: FPS_KEY };
+      for (const k of Object.keys(map)) if (o[k] != null) localStorage.setItem(map[k], String(o[k]));
       apply(); return cfg();
     },
   };
