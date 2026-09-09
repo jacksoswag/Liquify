@@ -34,5 +34,9 @@
  "rotating-cover-art-optimized": {
   "title": "Rotating Cover Art (Optimized)",
   "description": "Spinning vinyl in the Now Playing view only. The playbar disc and song-card vinyl each forced every backdrop-filter surface to recompute per frame (~60pts of GPU)."
+ },
+ "hide-whats-new": {
+  "title": "Hide What's New Button",
+  "description": "Removes the What's New button from the top bar."
  }
 }

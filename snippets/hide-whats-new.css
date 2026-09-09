@@ -1,0 +1,8 @@
+/* Hide What's New Button — Removes the "What's New" (bell) button from the top bar. */
+
+/* Exact attribute match on the button itself. Deliberately NOT a wildcard and
+   NOT :has() on an ancestor -- three separate breakages in this repo came from
+   selectors that matched more than the intended element. */
+button[aria-label="What's New"] {
+  display: none !important;
+}
