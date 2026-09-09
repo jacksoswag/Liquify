@@ -42,5 +42,9 @@
  "lyrics-headerless-card": {
   "title": "Liquid Lyrics Headerless Card",
   "description": "Removes the Liquid Lyrics card's top bar (icon and title) and floats its three controls over the top-right of the lyrics at low opacity, giving the lyrics the full height of the card."
+ },
+ "hide-home-button": {
+  "title": "Hide Home Button",
+  "description": "Removes the Home button from the top bar."
  }
 }

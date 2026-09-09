@@ -1,0 +1,8 @@
+/* Hide Home Button — Removes the Home button from the top bar. */
+
+/* Scoped to the global nav and matched by exact aria-label. Deliberately not a
+   wildcard or :has() -- three breakages in this repo came from selectors that
+   reached further than the element they named. */
+.Root__globalNav button[aria-label="Home"] {
+  display: none !important;
+}
