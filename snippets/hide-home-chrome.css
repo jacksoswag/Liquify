@@ -1,4 +1,4 @@
-/* Hide Home Chrome — Removes the All/Music/Podcasts/Audiobooks filter bar and the "Your updates" header strip from Home, plus the friend-activity button and the back/forward arrows from the top bar. Also drops the glass panel around the shortcuts grid and gives the page room to breathe at the top. */
+/* Hide Home Chrome — Removes the All/Music/Podcasts/Audiobooks filter bar and the "Your updates" header strip from Home, plus the friend-activity button, the back/forward arrows and the Browse basket from the top bar. Also drops the glass panel around the shortcuts grid and gives the page room to breathe at the top. */
 
 /* The whole filter bar, not just the four chips: the container also holds the
    glass pill behind them and the carousel's scroll buttons, so hiding only the
@@ -64,5 +64,21 @@ html body .view-homeShortcutsGrid-shortcuts {
    unscoped selector would conflate the two. */
 .Root__globalNav button[aria-label="Go back"],
 .Root__globalNav button[aria-label="Go forward"] {
+  display: none !important;
+}
+
+/* The Browse basket, sitting immediately right of the search field. Identified
+   by its icon rather than its position: a basket outline plus a filled dot,
+   which is the only thing in that row shaped that way. Search itself stays --
+   Alt+S reveals the bar and focuses the field. */
+.Root__globalNav button[aria-label="Browse"] {
+  display: none !important;
+}
+
+/* The Cmd/L key-cap hints inside the search field. The span wrapping them goes
+   rather than the <kbd> elements themselves, so the gap it holds between them
+   goes too; the placeholder text lives in a sibling and is untouched. */
+#global-nav-bar .main-globalNav-searchInputTextWrapper span:has(> kbd),
+#global-nav-bar .main-globalNav-searchInputTextWrapper kbd {
   display: none !important;
 }

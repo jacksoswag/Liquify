@@ -48,3 +48,14 @@ aside[aria-label="Now playing view"] button[aria-label^="More options"] {
 .Root__right-sidebar:has(aside[aria-label="Listening activity"]) .main-nowPlayingView-nowPlayingWidgets {
   display: none !important;
 }
+
+/* The friend feed's own header -- the "Listening activity" title and its close
+   button -- goes entirely.
+   It is built from the same .main-nowPlayingView-header* classes the Now
+   Playing panel uses, since Spotify reuses that shell for whatever panel is
+   open, so this is scoped to the aside by aria-label. Hiding the class
+   unscoped would take the Now Playing panel's header with it, and that one
+   still carries the track name and its More options button. */
+aside[aria-label="Listening activity"] .main-nowPlayingView-headerContainer {
+  display: none !important;
+}

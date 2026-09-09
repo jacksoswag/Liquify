@@ -494,8 +494,30 @@
     const mod = modOf(e);
     // Bare arrows seek, but never while typing or while a list has focus and
     // the user is arrowing through it with no modifier held.
-    if (!mod && isTyping(document.activeElement)) return;
-    if (mod && isTyping(document.activeElement) && mod !== 'cmd' && mod !== 'alt') return;
+    //
+    // While typing, only the chords that could plausibly be text editing are
+    // held back -- no modifier, and Shift on its own. The earlier test was
+    // `mod !== 'cmd' && mod !== 'alt'`, which let those two through by exact
+    // string and therefore silently swallowed every combination:
+    // Cmd+Alt+Left did nothing at all whenever focus sat in a text field, and
+    // the search box takes focus readily. Cmd and Alt combinations are never
+    // text editing on macOS, so they pass.
+    if (isTyping(document.activeElement) && !/cmd|alt/.test(mod)) return;
+
+    // Records Cmd+Alt keydowns so delivery can be checked later. If a real
+    // press leaves nothing here, the keystroke never reached the page at all
+    // and no page listener could have caught it; if it does appear, the fault
+    // is on this side. Two modifiers plus a key makes this fire essentially
+    // never in normal use.
+    if (e.metaKey && e.altKey) {
+      try {
+        const log = JSON.parse(localStorage.getItem('liquify-cmdalt-log') || '[]');
+        log.push({ code: e.code, key: e.key, at: new Date().toISOString().slice(11, 19),
+                   typing: isTyping(document.activeElement),
+                   focus: document.activeElement?.tagName });
+        localStorage.setItem('liquify-cmdalt-log', JSON.stringify(log.slice(-12)));
+      } catch { /* diagnostics never break a keypress */ }
+    }
     const hit = BINDS.find(([m, code]) => m === mod && code === e.code);
     if (!hit) return;
     e.preventDefault();
