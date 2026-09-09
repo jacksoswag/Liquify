@@ -1,6 +1,10 @@
 /* Hide Sort By & Add Collaborator — Removes the sort dropdown and the invite-collaborators button from playlist pages. */
+
+/* No general sibling combinator here. `.x-sortBox-sortDropdown ~ *` would hide
+   every following sibling, which is fine where the dropdown is isolated and
+   catastrophic anywhere it shares a parent with real content. Target the two
+   controls themselves and nothing else. */
 .x-sortBox-sortDropdown,
-.x-sortBox-sortDropdown ~ *,
 button[aria-label^="Invite collaborators"],
 button[aria-label^="Add collaborator"] {
   display: none !important;

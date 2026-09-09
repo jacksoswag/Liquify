@@ -1,4 +1,18 @@
 /* Hide Add / Mix / Name & Details Row — Removes the entire Add / Mix / Name & details button row under the playlist header. */
-.main-actionBar-ActionBarContainer > div:has(button[aria-label="Mix"]) {
+
+/* `:has()` matches descendants at ANY depth. The previous selector was
+     .main-actionBar-ActionBarContainer > div:has(button[aria-label="Mix"])
+   and .main-view-container__scroll-node also carries the class
+   main-actionBar-ActionBarContainer -- so that matched its top-level content
+   div (the Mix button is buried somewhere inside it) and set display:none on
+   the ENTIRE playlist page. It matched 2 elements: the 44px row and a 971px
+   content wrapper.
+
+   Liked Songs (/collection/tracks) has no Mix button, so the one page used for
+   testing never reproduced it while every real playlist was broken.
+
+   The depth here is exact -- button must be a grandchild of a direct child --
+   which matches only the row that literally wraps the three buttons. */
+div:has(> div > div > button[aria-label="Mix"]) {
   display: none !important;
 }
