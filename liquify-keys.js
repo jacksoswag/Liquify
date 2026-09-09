@@ -207,6 +207,11 @@
   const BINDS = [
     // --- song (cmd) ---
     ['cmd',       'KeyL',       'Like / unlike track',        () => Spicetify.Player.toggleHeart()],
+    // Cmd+F is the search key, taking that job from Spotify's own Cmd+L --
+    // which this list already overrides for Like, and whose hint chips are
+    // hidden from the search field. Same action as Alt+S: reveal the bar and
+    // focus the field, without navigating anywhere.
+    ['cmd',       'KeyF',       'Search',                     toggleSearch],
     ['cmd',       'KeyS',       'Cycle shuffle',              cycleShuffle],
     ['cmd',       'KeyR',       'Cycle repeat',               () => Spicetify.Player.toggleRepeat()],
     ['cmd',       'KeyP',       'Add track to playlist…',     addToPlaylist],

@@ -14,7 +14,6 @@
    The min-height on .main-yourLibraryX-headerContent below holds the row open
    instead. */
 .Root__nav-bar button[aria-label="Go back"],
-button[aria-label="Collapse Your Library"],
 button[aria-label="Expand Your Library"],
 button[aria-label="Hide Now Playing view"],
 button[aria-label="Show Now Playing view"] {
@@ -130,5 +129,77 @@ html body .YourLibraryX:has(:focus-visible) .main-yourLibraryX-collapseButton > 
    reach a real single-item dropdown somewhere else in the app. */
 [role="listbox"][aria-label="Filter options"]:not(:has(
     [role="option"]:not([data-lqx-hidden]) ~ [role="option"]:not([data-lqx-hidden]))) {
+  display: none !important;
+}
+
+
+/* "Your Library" as a heading, not a button.
+   The collapse control used to be hidden outright, which left the header a
+   59px band with nothing in it but the Create button floating at the right --
+   the folder view looks right precisely because it has a name in that band.
+   The title was there all along: this button carries the collapse icon AND an
+   <h1>Your Library</h1> inside a visually-hidden span, as its accessible name.
+   So the icon goes and the text comes out, and the header reads the same way
+   in both states -- "Your Library" at the root, the folder name inside a
+   folder, Create in one fixed place either way. */
+
+/* The icon, matched through its svg rather than the generated class that wraps
+   it. At rest that wrapper is opacity 0 and translated -100%, appearing only on
+   hover, which is why the collapse control looked like it was still there
+   however often it was reported gone. */
+.Root__nav-bar button[aria-label="Collapse Your Library"] > span:has(svg) {
+  display: none !important;
+}
+
+/* Undo the visually-hidden clipping so the h1 renders. Every property that
+   pattern sets has to be named: leaving the 1px box or the clip in place shows
+   nothing at all. */
+.Root__nav-bar button[aria-label="Collapse Your Library"] .e-10810-visually-hidden {
+  position: static !important;
+  clip: auto !important;
+  clip-path: none !important;
+  width: auto !important;
+  height: auto !important;
+  margin: 0 !important;
+  overflow: visible !important;
+  white-space: nowrap !important;
+}
+
+/* It is a heading now, so it should not behave like a control. pointer-events
+   rather than hiding it: the collapse action was deliberately removed from this
+   setup, and a title that silently collapses the sidebar when clicked is the
+   one wrinkle this approach otherwise has. */
+.Root__nav-bar button[aria-label="Collapse Your Library"] {
+  pointer-events: none !important;
+  cursor: default !important;
+  padding-left: 0 !important;
+}
+
+/* The button itself carries the -24px hover shift, and it is a grandchild of
+   .main-yourLibraryX-collapseButton, so the rule above that pins that group's
+   direct children does not reach it. Without this the title slides 24px
+   whenever the pointer enters the sidebar -- the same defect that was fixed for
+   the folder name and the Now Playing title. */
+html body .Root__nav-bar button[aria-label="Collapse Your Library"],
+html body .YourLibraryX:hover button[aria-label="Collapse Your Library"],
+html body .YourLibraryX:has(:focus-visible) button[aria-label="Collapse Your Library"] {
+  transform: none !important;
+}
+
+/* Match the folder name's weight and size so the two states look like the same
+   header rather than two different ones. */
+.Root__nav-bar button[aria-label="Collapse Your Library"] h1 {
+  font: inherit !important;
+  font-size: 1rem !important;
+  font-weight: 700 !important;
+  margin: 0 !important;
+}
+
+/* Inside a folder the header shows the folder's name, so "Your Library" must
+   not sit next to it. It already ends up as a 1px sliver at x=-1 there, but
+   only as a side effect of how the row lays out -- one pixel from actually
+   showing. This states it: if the group contains a folder title (an h2), the
+   wrapper holding the library title is not rendered at all. */
+.main-yourLibraryX-collapseButton:has(h2) > div:has(> button[aria-label="Collapse Your Library"]) {
   display: none !important;
 }
