@@ -27,36 +27,50 @@
   const nav = (path) => P.History.push(path);
   const clickByLabel = (...labels) => {
     for (const l of labels) {
-      const b = [...document.querySelectorAll('button')].find(
-        (x) => x.getAttribute('aria-label') === l && x.getBoundingClientRect().width > 0);
+      const all = [...document.querySelectorAll('button')]
+        .filter((x) => x.getAttribute('aria-label') === l);
+      // Prefer a visible match, but fall back to a hidden one: the library and
+      // Now Playing toggles are deliberately hidden by the Hide Library Chrome
+      // snippet and driven only from here, and a zero-width element still
+      // dispatches a click perfectly well.
+      const b = all.find((x) => x.getBoundingClientRect().width > 0) || all[0];
       if (b) { b.click(); return true; }
     }
     return false;
   };
 
-  // ---- left sidebar: hide the column entirely, not just collapse it ----
+  // ---- sidebars: hide the column entirely, not just collapse it ----
   //
-  // Spotify's own collapse leaves an icon rail. .Root__top-container is a grid
-  // whose columns are explicit pixels, so hiding the element alone would leave
-  // its track behind. The current third track is read and rewritten so the
-  // right sidebar keeps exactly the width it already had.
-  let leftHidden = false;
-  const toggleLeftSidebar = () => {
+  // Spotify's own controls only collapse: the left sidebar leaves an icon rail
+  // and the right one leaves a 32px strip (measured). With their toggle buttons
+  // hidden by the Hide Library Chrome snippet that strip is dead space, so both
+  // are removed from the grid outright.
+  //
+  // .Root__top-container is a grid whose columns are explicit pixels, so hiding
+  // the element alone would leave its track behind. Both flags are applied by
+  // one function that re-reads the natural widths with any override cleared --
+  // otherwise toggling one sidebar bakes in the other's collapsed width.
+  let leftHidden = false, rightHidden = false;
+  function syncSidebars() {
     const cont = document.querySelector('.Root__top-container');
     if (!cont) return;
-    leftHidden = !leftHidden;
     document.documentElement.classList.toggle('lqx-no-left', leftHidden);
-    if (leftHidden) {
-      const cols = getComputedStyle(cont).gridTemplateColumns.split(' ');
-      cont.style.setProperty('grid-template-columns',
-        `0px 1fr ${cols[2] || 'auto'}`, 'important');
-    } else {
-      cont.style.removeProperty('grid-template-columns');
-    }
-  };
-  const leftStyle = document.createElement('style');
-  leftStyle.textContent = `html.lqx-no-left .Root__nav-bar{display:none!important}`;
-  document.head.appendChild(leftStyle);
+    document.documentElement.classList.toggle('lqx-no-right', rightHidden);
+    cont.style.removeProperty('grid-template-columns');
+    if (!leftHidden && !rightHidden) return;
+    const cols = getComputedStyle(cont).gridTemplateColumns.split(' ');
+    const left = leftHidden ? '0px' : (cols[0] || 'auto');
+    const right = rightHidden ? '0px' : (cols[2] || 'auto');
+    cont.style.setProperty('grid-template-columns', `${left} 1fr ${right}`, 'important');
+  }
+  const toggleLeftSidebar = () => { leftHidden = !leftHidden; syncSidebars(); };
+  const toggleRightSidebar = () => { rightHidden = !rightHidden; syncSidebars(); };
+
+  const sidebarStyle = document.createElement('style');
+  sidebarStyle.textContent =
+    `html.lqx-no-left .Root__nav-bar{display:none!important}` +
+    `html.lqx-no-right .Root__right-sidebar{display:none!important}`;
+  document.head.appendChild(sidebarStyle);
 
   // ---- shuffle: cycle rather than toggle ----
   const cycleShuffle = () => {
@@ -172,8 +186,7 @@
     ['alt',       'KeyP',       'Your profile',               () => nav('/user/' + P.username)],
     ['alt',       'KeyL',       'Toggle lyrics',              toggleLyrics],
     ['alt',       'KeyB',       'Toggle left sidebar',        toggleLeftSidebar],
-    ['alt+shift', 'KeyB',       'Toggle right sidebar',       () =>
-                                  clickByLabel('Hide Now Playing view', 'Show Now Playing view')],
+    ['alt+shift', 'KeyB',       'Toggle right sidebar',       toggleRightSidebar],
     ['alt',       'KeyE',       'Expand / collapse library',  () =>
                                   clickByLabel('Collapse Your Library', 'Expand Your Library')],
     ['alt',       'KeyF',       'Friend activity',            () => clickByLabel('Listening activity')],

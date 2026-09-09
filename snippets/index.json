@@ -54,5 +54,9 @@
  "hide-marketplace-icon": {
   "title": "Hide Marketplace Icon",
   "description": "Removes the Marketplace button from the top bar; still reachable at Alt+M."
+ },
+ "hide-library-chrome": {
+  "title": "Hide Library Chrome",
+  "description": "Removes the sidebar back arrow, the library collapse/expand buttons and the Now Playing show/hide buttons (all on keybinds); makes Create an icon-only square; strips the glass rim from folder names and lets them use the freed width."
  }
 }

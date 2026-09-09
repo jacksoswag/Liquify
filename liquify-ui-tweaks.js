@@ -221,9 +221,12 @@
   function decorate() {
     // rename the entry point; Liquid Lyrics re-renders it, so this is idempotent
     const entry = document.querySelector('.ll-settings-btn');
-    if (entry && entry.getAttribute('aria-label') !== 'Liquify settings') {
+    if (entry && entry.getAttribute('data-tooltip') !== 'Liquify settings') {
       entry.setAttribute('aria-label', 'Liquify settings');
       entry.setAttribute('title', 'Liquify settings');
+      // Liquid Lyrics renders its own tooltip from data-tooltip, so the visible
+      // hover label comes from here rather than from aria-label.
+      entry.setAttribute('data-tooltip', 'Liquify settings');
     }
     const ll = document.querySelector(LL_PANEL);
     if (ll && !ll.querySelector('.lqx-settings-tabs')) ll.prepend(buildTabs('lyrics'));

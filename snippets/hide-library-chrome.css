@@ -1,0 +1,49 @@
+/* Hide Library Chrome — Removes the sidebar back arrow, the library collapse/expand buttons and the Now Playing show/hide buttons, all of which are on keybinds (Cmd+Alt+Left, Alt+B, Alt+E, Alt+Shift+B). Makes Create an icon-only square button, and lets folder names use the width that frees up without a glass rim. */
+
+/* These stay in the DOM rather than being removed: liquify-keys.js drives them
+   by clicking, and a display:none element still dispatches a click. */
+.Root__nav-bar button[aria-label="Go back"],
+button[aria-label="Collapse Your Library"],
+button[aria-label="Expand Your Library"],
+button[aria-label="Hide Now Playing view"],
+button[aria-label="Show Now Playing view"] {
+  display: none !important;
+}
+
+/* Create: icon only, square */
+.main-yourLibraryX-headerContent button[aria-label="Create"] {
+  width: 32px !important;
+  min-width: 32px !important;
+  max-width: 32px !important;
+  height: 32px !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  justify-content: center !important;
+  gap: 0 !important;
+}
+.main-yourLibraryX-headerContent button[aria-label="Create"] > span {
+  display: none !important;
+}
+
+/* The folder name in the header is itself a button, and the theme gives every
+   button the specular rim. On a text label that reads as a box around the name,
+   so it is dropped here -- and only here, by walking down from the nav bar so
+   this outranks the theme's own button rules.
+   The name is also freed from its fixed width: with the back and collapse
+   buttons gone there is room, and it should only ellipsise if it genuinely
+   cannot fit. */
+html body .Root__nav-bar .main-yourLibraryX-headerContent
+  button:not([aria-label="Create"]):not([aria-label^="More options"]) {
+  box-shadow: none !important;
+  background: none !important;
+  width: auto !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  overflow: visible !important;
+}
+
+.main-yourLibraryX-collapseButton {
+  min-width: 0 !important;
+  flex: 1 1 auto !important;
+  overflow: visible !important;
+}
