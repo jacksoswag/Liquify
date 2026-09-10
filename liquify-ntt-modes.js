@@ -60,7 +60,7 @@
   const BANDS = { easy: 100e6, medium: 10e6, hard: 500e3, impossible: 0 };
 
   const SOURCES = [
-    ['library', 'Your library'],
+    ['library', 'Your Library'],
     ['artist', 'Artist'],
     ['genre', 'Genre'],
     ['all', 'All Spotify'],
@@ -431,10 +431,51 @@
     //
     // The setter is the part that matters: whatever Spicetify assigns later
     // becomes the thing the wrapper delegates to, instead of replacing it.
+    // The game dedupes its own suggestions by URI, and a song has as many URIs
+    // as it has recordings -- so typing "awk" offered Awkward, Awkward and
+    // Awkward - Instrumental, three separate entries for one answer. Collapsed
+    // here with the same key the queue uses, which is also the key the game's
+    // answer check uses: if picking either would be scored identically, showing
+    // both is just a longer list.
+    //
+    // The first survivor wins rather than the most-played one, because a search
+    // response carries no playcount -- and Spotify's own ranking already puts
+    // the canonical recording above its variants.
+    const dedupeTracks = (r) => {
+      try {
+        const items = r?.data?.searchV2?.topResultsV2?.itemsV2;
+        if (!Array.isArray(items)) return r;
+        const seen = new Set();
+        const kept = items.filter((i) => {
+          const d = i?.item?.data;
+          if (i?.item?.__typename !== 'TrackResponseWrapper' || !d?.name) return true;
+          const k = songKey({
+            name: d.name,
+            artist: (d.artists?.items || []).map((a) => a.profile?.name).filter(Boolean)[0] || '',
+          });
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+        if (kept.length === items.length) return r;
+        // Rebuilt rather than spliced: this is Spotify's own response object,
+        // and the search modal may still be holding it.
+        return { ...r, data: { ...r.data, searchV2: { ...r.data.searchV2,
+          topResultsV2: { ...r.data.searchV2.topResultsV2, itemsV2: kept } } } };
+      } catch { return r; }
+    };
+
+    const isGameSearch = (def) =>
+      !ourCall && SEARCH_OPS.has(def?.name) && document.body.classList.contains('name-that-tune');
+
     const patch = (obj) => {
       if (!obj || typeof obj.Request !== 'function' || obj.__lqxScoped) return;
       let real = obj.Request.bind(obj);
-      const wrapper = (def, vars, ...rest) => real(def, scope(def, vars), ...rest);
+      const wrapper = (def, vars, ...rest) => {
+        const mine = isGameSearch(def);
+        const out = real(def, scope(def, vars), ...rest);
+        return mine ? Promise.resolve(out).then(dedupeTracks) : out;
+      };
       try {
         Object.defineProperty(obj, 'Request', {
           configurable: true,
@@ -839,7 +880,7 @@
         // Harder means a LOWER playcount floor, so an empty easy round is fixed
         // by going harder, not easier. Worth stating: the instinct on an empty
         // result is to reach the other way.
-        toast(`Nothing that popular in ${LABELS[c.source].toLowerCase()} - try a harder difficulty`, true);
+        toast(`Nothing that popular in ${LABELS[c.source]} - try a harder difficulty`, true);
         return;
       }
       const uris = shuffle(uniq(tracks.map((t) => t.uri))).slice(0, TARGET);
