@@ -88,6 +88,14 @@ Name That Tune game and a settings cleanup. Five extensions:
 | `liquify-ui-tweaks.js` | settings merge and pruning, Liquid Lyrics desync repair |
 | `liquify-ntt-modes.js` | source, difficulty and round settings for Name That Tune |
 
+Two more files in the repo are **not** loaded and are kept on purpose, so they
+are not leftovers to tidy away: `liquify-glass-gl.js` is the superseded first
+attempt at a GL background, kept because the note at the top of it explains why
+a WebGL canvas cannot stand in for glass that sits over live content, and
+`liquify-fabric-bg.js` cites it. `liquify-home-apps.js` renders custom apps as
+Home sections; the hard half works and its header documents the half that does
+not.
+
 ### Measurement method (read this before trusting any number)
 
 Two confounds invalidate naive benchmarking of this app, and both produced
