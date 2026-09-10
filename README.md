@@ -77,8 +77,16 @@ This project is licensed under the GNU Affero General Public License v3.0 (AGPL-
 
 ## Performance fork (`perf` branch)
 
-GPU optimization of Liquify's liquid-glass rendering, plus a repair for the
-Liquid Lyrics main-panel desync.
+A rewrite of how Liquify draws its liquid glass, plus a keyboard layer, a
+Name That Tune game and a settings cleanup. Five extensions:
+
+| file | what it does |
+|---|---|
+| `liquify-fabric-bg.js` | the background, as a WebGL fragment shader, and the panel glass |
+| `liquify-perf.js` | the shared SVG glass filter, shadow rules, the fabric sliders |
+| `liquify-keys.js` | keyboard control (`alt+/` lists every binding) |
+| `liquify-ui-tweaks.js` | settings merge and pruning, Liquid Lyrics desync repair |
+| `liquify-ntt-modes.js` | source, difficulty and round settings for Name That Tune |
 
 ### Measurement method (read this before trusting any number)
 
@@ -87,18 +95,27 @@ badly wrong numbers here before they were found:
 
 1. **Occlusion.** Spotify's GPU use is ~0% while the window is not composited
    and 70-85% while it is. Any average that mixes hidden and visible samples is
-   meaningless. Samples are now discarded unless `visibilityState === 'visible'`
-   and playback is running.
+   meaningless. Samples are discarded unless `visibilityState === 'visible'`
+   and playback is running. This also makes GPU% unmeasurable over remote
+   debugging, where the window is occluded by definition -- `ioreg -c
+   IOAccelerator` reads the same 22% for every configuration.
 2. **Baseline drift.** The baseline moves ~11 points as tracks change (album
    art, lyric density, canvas content), which swamps sequential block
    comparisons -- at one point "all glass off" measured *higher* than "with
-   glass". Configs are therefore **interleaved** and compared per-cycle.
+   glass". Configs must be **interleaved** and compared per-cycle.
 
-Also note `Page.setWebLifecycleState('active')` pins the GPU near 80% on an
-occluded window, so it must never be used while measuring.
+`Page.setWebLifecycleState('active')` pins the GPU near 80% on an occluded
+window, so it must never be used while measuring. `Page.startScreencast` is
+usable: it forces the compositor to keep producing frames, so a
+requestAnimationFrame counter returns comparable per-frame times even though
+the absolute values are inflated.
 
-Numbers below are medians of 7 interleaved cycles, playing music with the
-lyrics view open, at 1267x924.
+### GPU, measured
+
+Medians of 7 interleaved cycles, playing music with the lyrics view open, at
+1267x924. **These predate the shader background** and describe the fork as of
+the `backdrop-filter` era; they have not been re-run under the same protocol
+since, because the window has to be visible and unoccluded to measure at all.
 
 | configuration | GPU (median) | range |
 |---|---|---|
@@ -108,50 +125,139 @@ lyrics view open, at 1267x924.
 | *all glass removed entirely* | *62.9%* | 59.8-69.8 |
 | *all theme CSS stripped (~vanilla)* | *0.8%* | 0.2-3.5 |
 
-### What this means
+The lasting conclusions from that run: **refraction is essentially free**
+(single-pass displacement landed within 0.4 points of removing every
+`backdrop-filter` in the app), and **the remaining ~63% is the theme's
+aggregate paint structure**, not one property -- `box-shadow` ~6 points,
+`text-shadow` ~3, `mix-blend-mode` ~1, with the rest only reachable by
+stripping the theme wholesale. A sub-25% target is not reachable while keeping
+this theme's appearance.
 
-**The warping glass is not the problem.** Single-pass displacement lands within
-0.4 points of removing every `backdrop-filter` in the app, so refraction is
-essentially free. It is the **3-pass chromatic aberration chain** that costs
-~12 points (`feImage` -> 3x `feDisplacementMap` -> 3x `feColorMatrix` ->
-2x `feBlend`), and the per-element filter graphs that made it worse.
+### The background is a shader
 
-**The remaining ~63% is the theme's aggregate paint/layer structure**, not any
-single property. Measured against a no-glass baseline: `box-shadow` ~6 points,
-`text-shadow` ~3, `mix-blend-mode` ~1. The rest is not attributable to one
-declaration -- only stripping the theme wholesale reaches vanilla's 0.8%.
+`liquify-bg-layer` and everything around it is gone. The album art is deformed
+per pixel by a fragment shader on a quarter-resolution canvas, because
+deformation has to be one continuous function: an SVG `feDisplacementMap` over
+the rendered layer is invisible (that layer is already downscaled, blurred and
+dimmed -- measured 1.3% mean pixel change) and ruinous with `feTurbulence`
+(80 GPU points), and a Canvas 2D triangle mesh is piecewise-linear by
+construction, so it always creases.
 
-**The <25% target was not reached and is not reachable while keeping this
-theme's appearance.** Reporting that plainly rather than quoting a figure from
-a contaminated run.
+The theme's own background engine is **removed from the document** at runtime:
+two crossfading cover layers, a container of four 1948x1948 tiles each under a
+50px blur with a running CSS spin, and a full-window Kawarp div -- all of it
+prepended below an opaque canvas, none of it visible since this fork shipped.
+Nothing depends on those nodes: the accent is sampled from a URL, not from the
+DOM, verified in the running client.
 
-### What this fork changes
+Details that took real debugging and are easy to undo by accident:
 
-- **Shared filter graphs.** Stock Liquify builds one `liquify-filter-N` per
-  glass surface (86 selectors, 15 live graphs on one view). Collapsed to two.
+- The canvas is laid out **at its backing-store size and scaled up**, so its
+  CSS blur convolves a sixteenth of the pixels for an identical result.
+- It also runs **past the viewport** by ~2.5 sigma a side. A CSS blur is a
+  convolution against the element's own rendering, so a canvas at `inset: 0`
+  fades to transparent at every screen edge -- and those edges are the only
+  background the panels do not cover. Measured at the default blur, the gaps
+  read 53 and 17 against 91 for the same wall a few pixels further in.
+- Blur is a mip level **plus** a 16-tap golden-angle disc, with the mip chosen
+  so the taps overlap (`log2(r) - 1`). Taking the coarsest mip the radius
+  allowed magnified a 128px image across a 656px panel *and* left the taps
+  further apart than the texels they fetched, so each landed as its own visible
+  copy of the art.
+- `UNPACK_FLIP_Y_WEBGL` is **context** state, so it must be set before every
+  upload; a context loss silently returns it to false and the art comes back
+  upside down. And a context is only ever restored if `webglcontextlost` is
+  `preventDefault`-ed. Hiding and reopening the window is enough to trigger a
+  loss.
+
+### The panel glass is a second shader pass
+
+The three chrome containers (`Root__nav-bar`, `Root__main-view`,
+`Root__right-sidebar`) get their blur and edge refraction drawn into a second
+half-resolution canvas rather than through `backdrop-filter`. They are about
+1.15 of the ~2.1 filtered megapixels a full-CSS version would cost, and a
+filter graph over that area re-runs every time the background repaints
+underneath it -- measured at 31 fps against 56 with no CSS glass at all.
+
+Both passes evaluate an identical warp, and the two canvases are **different
+coordinate spaces**: the background overscans, the glass pass is exactly
+viewport-sized because its rectangles come from layout. Anything derived from
+`vUv` has to be mapped between them or the two show the same cover at
+different scales.
+
+The rim highlight has its own width, deliberately unrelated to the bend's. The
+bend wants to be generous -- glass that changes shape inside a finger's width
+reads as a crease -- and a highlight wants the opposite. Sharing one width made
+a 104-pixel band adding 15/255 to every panel, which read as the panels being a
+different surface from the wall behind them. Panel interior now matches the
+exposed background to within 0.5/255.
+
+### One glass filter for everything else
+
+The play bar, menus, tooltips and small controls stay on `backdrop-filter`,
+because a canvas sits at the bottom of the stack and can only stand in for a
+surface with nothing but background behind it.
+
+- **Shared filter graph.** Stock Liquify builds one `liquify-filter-N` per
+  glass surface (86 selectors, 15 live graphs on one view). Collapsed to one.
 - **Raster displacement map.** `feImage` pointed at an SVG data-URI that Skia
   re-rasterizes *inside the filter graph* on every `ResizeObserver` fire; now a
   canvas-rendered PNG.
+- **No chromatic aberration.** The filter had a second form running the
+  displacement three times, once per channel. It cost 32 GPU points measured,
+  it was sub-pixel on anything smaller than the play bar, and every attempt to
+  make it worth that price either stayed invisible (1/255 against a 1/255 noise
+  floor) or took the app to 90% GPU. Removed, not made optional.
 - **Dead backdrop elimination.** 115 of 137 glass surfaces were doing nothing:
   96 zero-area/offscreen, 12 at `opacity:0`, and 7 running `blur(0px)` -- a
   zero-radius blur is a visual no-op but still allocates a backdrop render
-  surface. Two of those were 657,661 px and 371,520 px. Backdrop-filtered area:
-  **1,532,015 -> 454,294 px**.
-- **Low-resolution album background.** `.liquify-bg-layer` renders into a
-  1/4-linear box scaled back up, blur radius divided to match:
-  **1,170,708 -> 73,227 px** of backing store per layer, visually identical.
-- **Liquid Lyrics desync repair.** See `liquify-ui-tweaks.js`.
-- **`cmd+P`** toggles perf mode; state persists.
+  surface.
+- **`Root__top-container::after`** carried a full-viewport
+  `backdrop-filter: brightness(2.12)` at `opacity: 0` on macOS -- 1.36
+  megapixels of work multiplied by zero, more filtered area than every real
+  glass surface combined. Switched off; the window changed by 0.056/255.
+
+Filtered area is **0.104 megapixels, 8% of the viewport, five surfaces.**
+
+Worth knowing if you touch the selector list: the theme ships 89 glass
+selectors and **80 of them match nothing** on Spotify 1.2.99. They are hashed
+class names from an older build. That, not the filter, is why the glass appears
+on so little.
+
+### Keyboard
+
+`liquify-keys.js`. Press **`alt+/`** for the full list. Notable:
+
+| chord | action |
+|---|---|
+| `alt+,` | toggle Liquify settings |
+| `alt+shift+p` | perf mode (drops the filter chain, keeps a plain blur) |
+| `alt+t` | Name That Tune |
+| `alt+l` | toggle lyrics |
+| `alt+b` / `alt+shift+b` | left / right sidebar |
+
+Bindings match on `e.code`, not `e.key`: macOS composes Alt as a dead key, so
+`alt+,` arrives as `key: "\u2264"` while `code` stays `Comma`.
+
+### Settings
+
+Eight rows that drove the deleted background engine or duplicated a control
+this fork added are pruned, and the fabric sliders are nested into the theme's
+own Background section rather than sitting above it as a second block with the
+same heading.
+
+Pruning has to be done with a stylesheet, not the `hidden` attribute:
+`[hidden] { display: none }` is a UA rule and the theme's
+`.liquifyRow { display: flex }` is an author rule, so it wins. Setting
+`el.hidden` and reading it back reports success and hides nothing.
 
 ### Install
 
-Copy `liquify-perf.js` and `liquify-ui-tweaks.js` into your Spicetify
-`Extensions/` folder, then:
-
 ```
-spicetify config extensions liquify-perf.js|liquify-ui-tweaks.js
+cp liquify-*.js "$(spicetify path userdata)/Extensions/"
+spicetify config extensions liquify-perf.js|liquify-ui-tweaks.js|liquify-keys.js|liquify-fabric-bg.js|liquify-ntt-modes.js
 spicetify apply
 ```
 
 Snippets live in `snippets/` and can be pasted into Spicetify Marketplace
-individually.
+individually. Tested against Spicetify 2.45.0 and Spotify 1.2.99.
