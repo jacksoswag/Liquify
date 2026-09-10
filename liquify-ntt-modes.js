@@ -50,6 +50,7 @@
   const DIFF_KEY = 'liquify-ntt-difficulty';
   const ARG_KEY = 'liquify-ntt-arg';
   const ARG_URI_KEY = 'liquify-ntt-arg-uri';
+  const LEN_KEY = 'liquify-ntt-length';
   const QUEUE_KEY = 'liquify-ntt-queue';        // the URIs of the game in progress
 
   // Playcount floors. Calibrated against real tracks rather than round numbers:
@@ -57,7 +58,30 @@
   // charted or went round somewhere, 500k is a real release with an audience
   // rather than an upload. Below that is where unnameable filler lives, which
   // is what "impossible" is for.
-  const BANDS = { easy: 100e6, medium: 10e6, hard: 500e3, impossible: 0 };
+  const BANDS = { easy: 100e6, medium: 10e6, hard: 500e3, impossible: 0, niche: 0 };
+
+  // "niche" is not a floor at all, which is why it is not in the table above in
+  // any meaningful sense. The other four ask "is this song bigger than X
+  // streams", a question whose answer depends on the artist: 500k is a deep cut
+  // for Tyler and a career high for a shoegaze band. Niche asks "is this song
+  // small FOR THIS CATEGORY" instead, taking the least-played quarter of
+  // whatever the source turned up -- so it means the same thing whether the
+  // source is one artist, a genre or your library.
+  const NICHE_FRACTION = 0.25;
+
+  const LENGTH_DEFAULT = 25;
+  const LENGTH_MIN = 1;
+  const LENGTH_MAX = 1000;
+  // An empty or unparseable field means "I did not choose", which is the
+  // default. A typed 0 means "I chose a number", and the answer to that is the
+  // minimum -- `Number(n) || DEFAULT` got this wrong, turning 0 into 25 because
+  // zero is falsy, which is a jump in the wrong direction from what was typed.
+  const clampLength = (n) => {
+    if (n === '' || n === null || n === undefined) return LENGTH_DEFAULT;
+    const v = Number(n);
+    if (!Number.isFinite(v)) return LENGTH_DEFAULT;
+    return Math.min(LENGTH_MAX, Math.max(LENGTH_MIN, Math.round(v)));
+  };
 
   const SOURCES = [
     ['library', 'Your Library'],
@@ -66,15 +90,17 @@
     ['all', 'All Spotify'],
   ];
   const DIFFICULTIES = [
-    ['easy', 'Easy'], ['medium', 'Medium'], ['hard', 'Hard'], ['impossible', 'Impossible'],
+    ['easy', 'Easy'], ['medium', 'Medium'], ['hard', 'Hard'],
+    ['impossible', 'Impossible'], ['niche', 'Niche'],
   ];
   const LABELS = Object.fromEntries(SOURCES);
 
-  const TARGET = 60;              // tracks handed to the game; it shuffles them
-  // Ceiling on album queries per game, whatever the mode. Measured: ~120ms
-  // each, and a run stops as soon as it has enough, so this is the worst case
-  // rather than the usual one.
-  const MAX_ALBUM_QUERIES = 24;
+  // Album queries per game. Measured at ~120ms each, and a run stops as soon as
+  // it has enough songs, so this is the worst case rather than the usual one.
+  // Scaled to the game being asked for: 24 was plenty for a fixed 60 songs and
+  // is nowhere near enough for 1000, and spending 160 requests to fill a
+  // 25-song game would be just as wrong in the other direction.
+  const albumBudget = (want) => Math.min(200, Math.max(24, Math.ceil(want / 6)));
 
   const cfg = () => ({
     source: localStorage.getItem(SRC_KEY) || 'library',
@@ -84,6 +110,7 @@
     // text is edited -- otherwise typing over a chosen artist would quietly
     // keep quizzing you on the old one.
     argUri: localStorage.getItem(ARG_URI_KEY) || '',
+    length: clampLength(localStorage.getItem(LEN_KEY) ?? LENGTH_DEFAULT),
   });
 
   const shuffle = (a) => {
@@ -244,11 +271,11 @@
   // Walks albums until it has enough tracks or runs out of budget. The budget is
   // the point: without it "All Spotify" would happily issue a request per album
   // of every artist it found.
-  async function tracksFromAlbums(albumUris, floor, want) {
+  async function tracksFromAlbums(albumUris, floor, want, budget) {
     const out = [];
     let queries = 0;
     for (const uri of albumUris) {
-      if (queries >= MAX_ALBUM_QUERIES || out.length >= want) break;
+      if (queries >= budget || out.length >= want) break;
       queries++;
       try {
         for (const t of await albumTracks(uri)) if (t.plays >= floor) out.push(t);
@@ -304,7 +331,7 @@
   // the library API itself does not carry one. Only tracks you actually saved
   // survive the intersection: an album query returns the whole record, and
   // quizzing you on the other nine tracks would not be your library.
-  async function fromLibrary(floor) {
+  async function fromLibrary(floor, want, budget) {
     const page = await Spicetify.Platform.LibraryAPI.getTracks({ limit: 400, offset: 0 });
     const saved = (page?.items || []).filter((t) => t.uri && !t.isLocal);
     if (!saved.length) return [];
@@ -321,7 +348,7 @@
     }
     const albums = shuffle([...perAlbum.entries()]).sort((x, y) => y[1] - x[1]).map(([uri]) => uri);
 
-    const decorated = await tracksFromAlbums(albums, floor, TARGET * 2);
+    const decorated = await tracksFromAlbums(albums, floor, want * 2, budget);
     const mine = decorated.filter((t) => savedUris.has(t.uri));
 
     // Below "hard" the floor stops doing anything useful for a personal library
@@ -335,28 +362,28 @@
     }));
   }
 
-  async function fromArtist(name, floor, uri) {
+  async function fromArtist(name, floor, uri, want, budget) {
     let artistUri = uri;
     if (!artistUri) {
       const [artist] = await searchArtists(name, 1);
       if (!artist) throw new Error(`No artist found for "${name}"`);
       artistUri = artist.uri;
     }
-    const albums = await artistAlbums(artistUri, MAX_ALBUM_QUERIES);
-    return tracksFromAlbums(albums, floor, TARGET);
+    const albums = await artistAlbums(artistUri, budget);
+    return tracksFromAlbums(albums, floor, want, budget);
   }
 
   // A genre is not a thing you can list tracks from, so it is resolved the way
   // a person would: find artists for it, then take their records. Three albums
   // per artist keeps one prolific act from becoming the whole quiz.
-  async function fromGenre(name, floor) {
+  async function fromGenre(name, floor, want, budget) {
     const artists = await searchArtists(name, 8);
     if (!artists.length) throw new Error(`No artists found for "${name}"`);
     const albums = [];
     for (const a of artists) {
       try { albums.push(...(await artistAlbums(a.uri, 3))); } catch {}
     }
-    return tracksFromAlbums(shuffle(albums), floor, TARGET);
+    return tracksFromAlbums(shuffle(albums), floor, want, budget);
   }
 
   // "All Spotify" has no listing endpoint either. Random two-letter seeds are
@@ -366,25 +393,48 @@
   const SEEDS = 'abcdefghijklmnopqrstuvwxyz';
   const randomSeed = () => SEEDS[Math.floor(Math.random() * 26)] + SEEDS[Math.floor(Math.random() * 26)];
 
-  async function fromAll(floor) {
+  async function fromAll(floor, want, budget) {
     const albums = [];
-    for (let i = 0; i < 4 && albums.length < MAX_ALBUM_QUERIES; i++) {
+    for (let i = 0; i < 4 && albums.length < budget; i++) {
       try {
         const artists = await searchArtists(randomSeed(), 4);
         for (const a of artists) albums.push(...(await artistAlbums(a.uri, 2)));
       } catch {}
     }
-    return tracksFromAlbums(shuffle(albums), floor, TARGET);
+    return tracksFromAlbums(shuffle(albums), floor, want, budget);
   }
 
-  async function buildQueue({ source, difficulty, arg, argUri }) {
+  // The least-played quarter of what the source turned up, or the least-played
+  // `count` of it when a quarter would not fill the game -- so asking for 25
+  // niche songs from an artist with 40 tracks gives you their 25 quietest
+  // rather than ten songs and an apology.
+  function nicheSlice(tracks, count) {
+    const sorted = [...tracks].sort((a, b) => a.plays - b.plays);
+    const quarter = Math.ceil(sorted.length * NICHE_FRACTION);
+    return sorted.slice(0, Math.max(quarter, Math.min(count, sorted.length)));
+  }
+
+  async function buildQueue({ source, difficulty, arg, argUri, length }) {
+    const want = clampLength(length);
     const floor = BANDS[difficulty] ?? 0;
+    const niche = difficulty === 'niche';
+    // Niche has to see the whole pool before it can know where the bottom
+    // quarter of it is, so it does not stop early at `want` the way a floor
+    // does -- it runs to the query budget and slices afterwards.
+    const gather = niche ? Infinity : want;
+    const budget = albumBudget(want);
+
     let tracks;
-    if (source === 'artist') tracks = await fromArtist(arg, floor, argUri);
-    else if (source === 'genre') tracks = await fromGenre(arg, floor);
-    else if (source === 'all') tracks = await fromAll(floor);
-    else tracks = await fromLibrary(floor);
-    return dedupe(tracks);
+    if (source === 'artist') tracks = await fromArtist(arg, floor, argUri, gather, budget);
+    else if (source === 'genre') tracks = await fromGenre(arg, floor, gather, budget);
+    else if (source === 'all') tracks = await fromAll(floor, gather, budget);
+    else tracks = await fromLibrary(floor, gather, budget);
+
+    // Deduped BEFORE the slice: an instrumental and its album cut sit at
+    // different playcounts, so leaving both in would let one song occupy two
+    // places in the bottom quarter and drag a louder song out of it.
+    tracks = dedupe(tracks);
+    return niche ? nicheSlice(tracks, want) : tracks;
   }
 
   // ---- scoping the game's own suggestions ------------------------------------
@@ -547,7 +597,9 @@
 
     #lqx-ntt-panel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
       pointer-events:auto;display:none;flex-direction:column;gap:16px;
-      width:min(400px,86%);padding:22px;border-radius:20px;
+      /* Wide enough for the five difficulty chips on one line -- measured, the
+         row needs ~390px of content and the sources row ~370px. */
+      width:min(480px,92%);padding:22px;border-radius:20px;
       background:color-mix(in srgb,var(--spice-main) 76%,transparent);
       box-shadow:inset 0 0 0 1px rgba(255,255,255,.12),0 26px 60px rgba(0,0,0,.5);
       backdrop-filter:blur(30px)}
@@ -565,6 +617,7 @@
     .lqx-ntt-label{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
       color:var(--spice-subtext)}
     .lqx-ntt-seg{display:flex;flex-wrap:wrap;gap:6px}
+    .lqx-ntt-seg button{flex:0 0 auto}
     .lqx-ntt-seg button{appearance:none;border:0;cursor:pointer;border-radius:999px;
       padding:7px 13px;font:inherit;font-size:12px;font-weight:600;
       color:var(--spice-subtext);background:rgba(255,255,255,.08)}
@@ -610,6 +663,12 @@
 
     body.name-that-tune .notistack-Snackbar{display:none!important}
 
+    #lqx-ntt-len{width:96px;appearance:none;border:0;border-radius:10px;padding:9px 12px;
+      font:inherit;font-size:13px;color:var(--spice-text);background:rgba(255,255,255,.09)}
+    #lqx-ntt-len:focus{outline:none;background:rgba(255,255,255,.15)}
+    #lqx-ntt-lenrow{display:flex;align-items:center;gap:10px}
+    #lqx-ntt-lenrow em{font-style:normal;font-size:11px;color:var(--spice-subtext)}
+
     #lqx-ntt-go{appearance:none;border:0;cursor:pointer;border-radius:999px;padding:11px 18px;
       font:inherit;font-size:13px;font-weight:700;color:var(--spice-main);background:var(--spice-button)}
     #lqx-ntt-go:disabled{opacity:.55;cursor:progress}
@@ -642,7 +701,7 @@
     <button id="lqx-ntt-new" type="button" aria-label="New game" title="New game"><svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="11" y="4" width="2" height="16" rx="1"></rect><rect x="4" y="11" width="16" height="2" rx="1"></rect></svg></button>
     <div id="lqx-ntt-panel" role="dialog" aria-label="New game">
       <div id="lqx-ntt-head">
-        <h2>New game</h2>
+        <h2>New Game</h2>
         <button id="lqx-ntt-close" type="button" aria-label="Close">&#10005;</button>
       </div>
       <div class="lqx-ntt-field">
@@ -660,6 +719,13 @@
         <span class="lqx-ntt-label">Difficulty</span>
         <div class="lqx-ntt-seg" id="lqx-ntt-diff"></div>
       </div>
+      <div class="lqx-ntt-field">
+        <span class="lqx-ntt-label">Rounds</span>
+        <div id="lqx-ntt-lenrow">
+          <input id="lqx-ntt-len" type="number" min="1" max="1000" step="1" inputmode="numeric">
+          <em>1 to 1000 songs</em>
+        </div>
+      </div>
       <button id="lqx-ntt-go" type="button">Start</button>
     </div>`;
   document.body.appendChild(root);
@@ -671,6 +737,7 @@
   const $argLabel = root.querySelector('#lqx-ntt-arglabel');
   const $arg = root.querySelector('#lqx-ntt-arg');
   const $sugg = root.querySelector('#lqx-ntt-sugg');
+  const $len = root.querySelector('#lqx-ntt-len');
   const $go = root.querySelector('#lqx-ntt-go');
   const $toast = root.querySelector('#lqx-ntt-toast');
 
@@ -883,7 +950,7 @@
         toast(`Nothing that popular in ${LABELS[c.source]} - try a harder difficulty`, true);
         return;
       }
-      const uris = shuffle(uniq(tracks.map((t) => t.uri))).slice(0, TARGET);
+      const uris = shuffle(uniq(tracks.map((t) => t.uri))).slice(0, c.length);
       gameQueue = new Set(uris);
       try { localStorage.setItem(QUEUE_KEY, JSON.stringify(uris)); } catch {}
       openPanel(false);
@@ -895,7 +962,13 @@
         search: `?t=${Date.now()}`,
         state: { URIs: uris },
       });
-      toast(`${uris.length} songs - ${LABELS[c.source]}, ${c.difficulty}`);
+      // Reports what was FOUND, not what was asked for: a 400-round game of one
+      // artist's niche tracks will come up short, and saying so beats letting
+      // the game quietly end early.
+      const asked = c.length;
+      toast(uris.length < asked
+        ? `${uris.length} songs (asked for ${asked}) - ${LABELS[c.source]}, ${c.difficulty}`
+        : `${uris.length} songs - ${LABELS[c.source]}, ${c.difficulty}`);
     } catch (e) {
       toast(String(e?.message || e), true);
     } finally {
@@ -917,7 +990,25 @@
   paintSegment($srcSeg, c0.source);
   paintSegment($diffSeg, c0.difficulty);
   $arg.value = c0.arg;
+  $len.value = String(c0.length);
   syncArgField();
+
+  // Stored raw while typing so a half-finished number is not fought with, and
+  // clamped when the field is left -- an empty box or a 5000 becomes 25 or 1000
+  // on the way out rather than under the cursor.
+  $len.addEventListener('input', () => localStorage.setItem(LEN_KEY, $len.value));
+  $len.addEventListener('change', () => {
+    const n = clampLength($len.value);
+    $len.value = String(n);
+    localStorage.setItem(LEN_KEY, String(n));
+  });
+  $len.addEventListener('blur', () => $len.dispatchEvent(new Event('change')));
+  $len.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    $len.dispatchEvent(new Event('change'));
+    startGame();
+  });
 
   $go.addEventListener('click', startGame);
   $new.addEventListener('click', () => openPanel(true));
@@ -973,6 +1064,6 @@
   // neither fires anything this could listen to.
   setInterval(() => { if (document.body.classList.contains('name-that-tune')) place(); }, 2000);
 
-  window.liquifyNttModes = { cfg, buildQueue, startGame, dedupe, songKey, BANDS, gameActive };
+  window.liquifyNttModes = { cfg, buildQueue, startGame, dedupe, songKey, nicheSlice, clampLength, BANDS, gameActive };
   console.log('[liquify-ntt-modes] ready');
 })();

@@ -37,7 +37,17 @@
   const cfg = () => ({
     strength: Math.max(0, Math.min(100, num(STRENGTH_KEY, 70))),
     speed: Math.max(1, Math.min(100, num(SPEED_KEY, 45))),
-    blur: Math.max(0, Math.min(160, num(BLUR_KEY, 38))),
+    // 12, and the number matters more than it looks. This blur is what the
+    // theme's glass has to refract: every panel carries
+    // `backdrop-filter: url(#lqx-lo) blur(2px)`, a 2px blur plus an SVG
+    // displacement map, and both of those are transformations of DETAIL. Blur
+    // this layer to mush first and there is nothing left for them to bend --
+    // the panels go flat, and the glass looks broken while being perfectly
+    // functional. Measured with a probe: at 30 the difference between a glass
+    // panel and a plain tinted box was invisible; at 12 the album art reads
+    // through every panel edge. The old default of 38 was chosen for how the
+    // background alone looked, which was the wrong thing to be looking at.
+    blur: Math.max(0, Math.min(160, num(BLUR_KEY, 12))),
     fps: Math.max(10, Math.min(60, num(FPS_KEY, 60))),
   });
 
