@@ -622,6 +622,13 @@
   const CHROMA_KEY = 'liquify-glass-chromatic';
   const chromaOn = () => localStorage.getItem(CHROMA_KEY) === 'on';
   const DISPERSION = 0.6;
+  // Width of the fringe band, in canvas pixels -- so 7 is 14 on screen, against
+  // the 104 the bend itself eases over. Narrow on purpose: this is meant to
+  // read as the edge of a piece of glass catching the light, not as a coloured
+  // border. It is also what gates the three extra texture reads, so tightening
+  // it from the refraction band to this took them from about a third of the
+  // panel pixels to well under a tenth.
+  const FRINGE = 7;
 
   const gCanvas = document.createElement('canvas');
   gCanvas.id = 'lqx-glass';
@@ -643,7 +650,7 @@
   in vec2 vUv;
   out vec4 outColor;
   uniform sampler2D uA, uB;
-  uniform float uMix, uT, uAmp, uZoom, uLod, uRefract, uTint, uEdge, uSpread, uChroma;
+  uniform float uMix, uT, uAmp, uZoom, uLod, uRefract, uTint, uEdge, uSpread, uChroma, uFringe;
   uniform vec2 uCover, uMean, uRes;
   uniform vec4 uGrip[${GRIPS}];
   uniform vec2 uGW[${GRIPS}];
@@ -744,6 +751,19 @@
     float ry = 1. - smoothstep(0., uEdge, toEdge.y);
     float rim = 1. - (1. - rx) * (1. - ry);
     vec2 n = normalize(vec2(sign(rel.x) * rx, sign(rel.y) * ry) + 1e-5);
+
+    // The fringe rides its own band, not the refraction's.
+    //
+    // The bend eases in over uEdge -- 52 canvas pixels, 104 on screen -- because
+    // a slab of glass that changes shape inside a finger's width reads as a
+    // crease rather than a curve. A colour fringe wants the opposite: dispersion
+    // is only visible where the bend is steepest, which is the outermost few
+    // pixels, and spread across the whole falloff it stops being a fringe and
+    // becomes a wash. Built the same way as rim so it is smooth through the
+    // corners -- two per-axis ramps joined as a smooth union, never a min().
+    float gx = 1. - smoothstep(0., uFringe, toEdge.x);
+    float gy = 1. - smoothstep(0., uFringe, toEdge.y);
+    float edge = 1. - (1. - gx) * (1. - gy);
     vec2 bend = n * rim * uRefract * vec2(1., -1.) / uRes;
     vec2 uv0 = vUv + bend;
 
@@ -796,8 +816,8 @@
     // difference would inject sharp texture rather than a colour shift. One mip
     // level up is a texel the width of the disc, which is the blur the disc
     // produces.
-    if (uChroma > 0. && rim > 0.02) {
-      vec2 dsp = n * vec2(1., -1.) * uCover * uZoom * (uChroma * rim * uSpread);
+    if (uChroma > 0. && edge > 0.02) {
+      vec2 dsp = n * vec2(1., -1.) * uCover * uZoom * (uChroma * edge * uSpread);
       float lod = uLod + 1.;
       vec3 mid = samp(t, lod);
       col.r += samp(t + dsp, lod).r - mid.r;
@@ -833,11 +853,10 @@
     // cover and drowned a dark one: against artwork at luminance 0.1 a fixed
     // 0.12 is more than the picture. The small floor keeps an edge visible on
     // near-black art, where otherwise there would be nothing to split.
-    float a = rim * rim;
-    float b = a * a * a;
     float lum = dot(col, vec3(.299, .587, .114)) + 0.07;
-    col += a * 0.06;
-    col += uChroma * 0.62 * lum * (b * vec3(1., .1, -.35) + (a - b) * vec3(-.35, .1, 1.));
+    col += rim * rim * 0.06;
+    float warm = edge * edge * edge;
+    col += uChroma * 0.9 * lum * (warm * vec3(1., .1, -.35) + (edge - warm) * vec3(-.35, .1, 1.));
     outColor = vec4(col * inside, inside);   // premultiplied
   }`;
 
@@ -880,7 +899,7 @@
                grip: U('uGrip'), gw: U('uGW'), rect: U('uRect'), rad: U('uRad'),
                count: U('uCount'), lod: U('uLod'), refract: U('uRefract'),
                tint: U('uTint'), edge: U('uEdge'), spread: U('uSpread'),
-               chroma: U('uChroma') };
+               chroma: U('uChroma'), fringe: U('uFringe') };
       g2.uniform1i(gUni.A, 0);
       g2.uniform1i(gUni.B, 1);
       g2.enable(g2.BLEND);
@@ -1033,6 +1052,7 @@
     g2.uniform1f(gUni.refract, 20 * warp);
     g2.uniform1f(gUni.edge, 52);
     g2.uniform1f(gUni.chroma, chromaOn() ? DISPERSION : 0);
+    g2.uniform1f(gUni.fringe, FRINGE);
     // The SAME dimming as the background, not a step above it.
     //
     // "Lit from within" was a nice idea and the wrong one here: the panels
