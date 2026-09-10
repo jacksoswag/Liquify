@@ -239,7 +239,8 @@
     // Custom apps get no sidebar entry on this client: Spicetify's
     // _renderNavLinks throws "Cannot read properties of undefined (reading
     // 'useReducer')" before it can add one, so a keybind is the only way in.
-    ['alt',       'KeyT',       'Statistics',                 () => nav('/stats')],
+    // Alt+T is free again -- the Stats app is uninstalled, see the note in
+    // liquify-cosmos-shim.js.
     ['alt',       'KeyG',       'Name That Tune',             () => nav('/name-that-tune')],
     ['alt',       'KeyP',       'Your profile',               () => nav('/user/' + P.username)],
     ['alt',       'KeyL',       'Toggle lyrics',              toggleLyrics],
