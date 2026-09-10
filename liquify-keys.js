@@ -249,7 +249,7 @@
     ['alt',       'KeyF',       'Friend activity',            () => clickByLabel('Listening activity')],
     ['alt+shift', 'KeyF',       'Search in library',          () => clickByLabel('Search in Your Library')],
     ['alt',       'KeyD',       'Connect to a device',        () => clickByLabel('Connect to a device')],
-    ['alt',       'Comma',      'Settings',                   openSettings],
+    ['alt',       'Comma',      'Liquify settings',           openSettings],
     ['alt+shift', 'KeyP',       'Performance mode',           togglePerf],
     ['alt+shift', 'KeyD',       'Pointer probe (debug)',      togglePointerProbe],
     ['alt',       'Slash',      'Show this shortcut list',    showCheatSheet],
@@ -450,12 +450,61 @@
       || clickByLabel('Lyrics');
   }
 
+  // ---- Liquify settings (Alt+,) ----
+  //
+  // The chord was already bound and already reached the right panel, but only
+  // by a three-link accident: it clicked '.ll-settings-btn', which is LIQUID
+  // LYRICS' button, and landed on Liquify's panel solely because
+  // liquify-ui-tweaks.js installs a document-capture interceptor that swallows
+  // that click and redirects it. Break any link -- Liquid Lyrics not yet
+  // fetched from the Marketplace, ui-tweaks throwing before it installs the
+  // interceptor, its passThrough latch stuck open -- and Alt+, opens another
+  // product's settings. So the order is inverted below: the theme's own entry
+  // point first, its gear second, and that button only as a last resort.
+  //
+  // The real complaint, though, is that it never CLOSED. openSettingsModal
+  // (theme.js:11365) is not a toggle and is not idempotent: it removes the live
+  // overlay and renders a fresh React tree into a new one, so a second press
+  // rebuilt the panel, replayed the entry animation and threw away the scroll
+  // position rather than dismissing anything. Nothing else dismisses it either
+  // -- the theme's only two Escape handlers belong to a dropdown and the image
+  // library, and the backdrop closes only on a click landing exactly in the
+  // overlay's 24px of padding. So the close half has to live here.
+  //
+  // Liquid Lyrics' own settings are the second tab inside the panel this opens
+  // (liquify-ui-tweaks builds the tab bar), so they do not need a chord.
+  const LQ_OVERLAY_ID = 'liquify-settings-react-overlay';
+
+  function closeLiquifySettings() {
+    // Its own Close button rather than overlay.remove(): that button runs
+    // closeWithAnimation -> unmountOverlay, which is the only path in the theme
+    // that calls ReactDOM.unmountComponentAtNode. Tearing the node out by hand
+    // orphans the mounted tree and the window listeners it registered.
+    const btn = document.querySelector(
+      '.liquifySettingsHeader button[aria-label="Close"], .liquifySettingsHeader .liquifyCloseBtn');
+    if (btn) return btn.click();
+    document.getElementById(LQ_OVERLAY_ID)?.remove();
+  }
+
   function openSettings() {
-    // the merged panel lives on Liquid Lyrics' settings button; fall back to
-    // Liquify's own gear if Liquid Lyrics is not mounted
+    if (document.getElementById(LQ_OVERLAY_ID)) return closeLiquifySettings();
+    // The theme's own entry point: no DOM dependency, and exactly what the gear
+    // button's handler calls, one hop shorter.
+    if (typeof window.showLiquifySettingsMenu === 'function') {
+      try { return window.showLiquifySettingsMenu(); }
+      catch (e) { console.error('[liquify-keys] showLiquifySettingsMenu', e); }
+    }
+    // The gear. Hidden by the Hide Liquify Gear snippet, which does not matter:
+    // click() fires listeners on a display:none element.
+    const gear = document.getElementById('liquify-settings-gear-btn');
+    if (gear) return gear.click();
     const merged = document.querySelector('.ll-settings-btn');
     if (merged) return merged.click();
-    document.getElementById('liquify-settings-gear-btn')?.click();
+    // Silence here is indistinguishable from a broken keybinding, and the
+    // window where all three are missing is real: the theme is fetched over the
+    // network by the Marketplace, so none of them exist for the first seconds
+    // of a session, or at all if that fetch never lands.
+    toast('Liquify settings are not loaded yet');
   }
 
   function togglePerf() {

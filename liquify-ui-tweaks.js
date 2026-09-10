@@ -238,8 +238,15 @@
 
   // Its own Close button, not the (now hidden) gear: clicking the gear again
   // did not reliably toggle the panel shut, which left both overlays stacked.
+  // Both selectors. The aria-label is the theme's translated `t.close`, so
+  // matching on the English string alone finds nothing on a client running in
+  // any of the other eleven languages the theme ships -- and then the Lyrics
+  // tab opens Liquid Lyrics without closing Liquify, which is the stacked-panel
+  // bug this function exists to prevent.
   const closeLiquify = () =>
-    document.querySelector('.liquifySettingsHeader button[aria-label="Close"]')?.click();
+    document.querySelector(
+      '.liquifySettingsHeader .liquifyCloseBtn, .liquifySettingsHeader button[aria-label="Close"]'
+    )?.click();
   const closeLyrics = () => { if (llOpen()) document.querySelector('.ll-settings-overlay')?.querySelector('.ll-settings-close, [aria-label*="lose"]')?.click(); };
 
   // The entry point is relabelled "Liquify settings", so it has to open the

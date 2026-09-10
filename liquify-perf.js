@@ -23,11 +23,6 @@
 (function liquifyPerf() {
   const NS = 'http://www.w3.org/2000/svg';
   const ID = 'lqx';
-  // Linear downscale factor of the album-background layer. Declared here
-  // rather than beside the background code because buildDriftFilter() runs
-  // during setup and needs it -- referencing it later put it in the temporal
-  // dead zone and threw at boot, which killed the whole extension silently.
-  const BG_SCALE = 4;
   const PERF_KEY = 'liquify-perf-mode';
 
   if (!document.body) return setTimeout(liquifyPerf, 300);
@@ -105,6 +100,13 @@
   // by the sliders in Liquify's settings panel and are read by that extension.
 
   // ---- drift settings (persisted; also exposed in Liquify's settings panel) ----
+  // One key, two implementations, because there are now two kinds of glass.
+  // liquify-fabric-bg.js reads this same key and does the dispersion inside its
+  // fragment shader for the three big panels it draws; the SVG chain below is
+  // what is left for the play bar and the few small surfaces still refracting
+  // real DOM pixels through backdrop-filter. Splitting the setting in two would
+  // have meant a checkbox that fringes a quarter of the window and another that
+  // fringes the rest.
   const CHROMA_KEY = 'liquify-glass-chromatic';          // 'on' | 'off'
   const chromaOn = () => localStorage.getItem(CHROMA_KEY) === 'on';
   const DRIFT_STRENGTH_KEY = 'liquify-drift-strength';   // 0-100, 0 = off
@@ -133,6 +135,12 @@
     // costs 32 GPU points (77.2% -> 44.8%) for an RGB fringe that is sub-pixel
     // at blur(2px). Single-pass keeps the refraction/warping identical, so it
     // is the default; chromatic is opt-in.
+    //
+    // That measurement was taken when this chain still drew the whole window.
+    // It now covers the play bar and a couple of buttons -- 0.09 megapixels --
+    // so the 32 points is an upper bound roughly ten times too big for what is
+    // left. The panels' fringe is the shader's, and costs what is documented
+    // there.
     const hi = chromaOn() ? ID + '-hi' : ID + '-lo';
     style.textContent =
       `:root, html [data-liquify]{--glass-filter:url(#${hi}) !important;--liquify-filter:url(#${hi}) !important;}` +
@@ -141,46 +149,15 @@
   applyGlassStyle();
 
 
-  // ---- low-resolution album background ----
+  // ---- the theme's own background layers ----
   //
-  // `.liquify-bg-layer` is the album art behind everything: position:fixed,
-  // inset:0, background-size:cover, running a live `blur(7px) brightness(.45)`
-  // over the full viewport -- two of them, ~1.17M px each. Measured, CSS
-  // `filter` on these layers is worth ~20 GPU points, far more than the
-  // `opacity:0` animated tiles Chromium already skips.
-  //
-  // The layer is heavily blurred, so it does not need full resolution. Render
-  // it into a 1/4-linear (1/16-area) box and scale it back up, dividing the
-  // blur radius to match. 1,170,708 px -> 73,227 px of backing store per layer,
-  // and the upscale filtering contributes softening of its own. Visually
-  // indistinguishable at this blur radius.
-
-  const bgStyle = document.createElement('style');
-  bgStyle.id = ID + '-bg';
-  document.head.appendChild(bgStyle);
-  function applyBgStyle() {
-    // 27vw/27vh (not 25) gives overscan so drift never pulls transparent pixels
-    // in from outside the layer's own bounds.
-    bgStyle.textContent = `
-      .liquify-bg-layer {
-        left: -1vw !important;
-        top: -1vh !important;
-        width: ${(100 / BG_SCALE) + 2}vw !important;
-        height: ${(100 / BG_SCALE) + 2}vh !important;
-        right: auto !important;
-        bottom: auto !important;
-        transform: scale(${BG_SCALE}) !important;
-        transform-origin: 0 0 !important;
-        filter: blur(${(7 / BG_SCALE).toFixed(2)}px) brightness(0.45) !important;
-      }
-      html.liquify-perf .liquify-bg-layer {
-        width: ${(100 / (BG_SCALE * 2)) + 2}vw !important;
-        height: ${(100 / (BG_SCALE * 2)) + 2}vh !important;
-        transform: scale(${BG_SCALE * 2}) !important;
-        filter: blur(${(7 / (BG_SCALE * 2)).toFixed(2)}px) brightness(0.45) !important;
-      }`;
-  }
-  applyBgStyle();
+  // Gone. `.liquify-bg-layer` used to be the album art behind everything, and
+  // this file spent a block shrinking its backing store to a sixteenth so its
+  // live blur cost less. Nothing draws it now: liquify-fabric-bg.js paints the
+  // background in a shader and, as of the same change, REMOVES the theme's two
+  // cover layers, its four spinning tiles and its Kawarp div from the document
+  // outright -- they had been sitting under an opaque canvas being rendered for
+  // nobody. There is nothing left here to style.
 
   // ---- shadows ----
   //
@@ -513,18 +490,25 @@
     chroma.innerHTML = `
       <div style="font:600 13px/1.4 inherit;opacity:.9;margin-bottom:4px">Chromatic aberration
         <div style="font:400 11px/1.4 inherit;opacity:.55;margin-top:3px">
-          RGB fringing on the glass edges. Measured at ~32 GPU points; the warping
-          refraction is unaffected either way.
+          Red and blue split apart where the glass bends hardest, along the rim
+          of every panel -- the same thing a thick lens edge does to white light.
+          Drawn in the background shader, only for the quarter of the panel that
+          actually curves, so it is three extra texture reads there and none
+          anywhere else. Scales with Warp: no warp, no fringe.
         </div>
       </div>
       <label style="display:flex;align-items:center;gap:10px;margin:8px 0;font:400 12px/1 inherit;opacity:.85">
         <input type="checkbox" data-lqx-chroma ${chromaOn() ? 'checked' : ''}>
-        <span>Enable (costs GPU)</span>
+        <span>Enable</span>
       </label>`;
     wrap.appendChild(chroma);
     chroma.querySelector('[data-lqx-chroma]').addEventListener('change', (e) => {
       localStorage.setItem(CHROMA_KEY, e.target.checked ? 'on' : 'off');
       applyGlassStyle();
+      // The shader re-reads the key every frame, but the frame loop is stopped
+      // while the window is occluded, so nudge it rather than leaving the panels
+      // showing the old setting until something else happens to draw.
+      window.liquifyFabric?.drawOnce?.();
     });
     // FIRST child, not appended. Appending put this block below every one of the
     // theme's own sections and below "Reset all Settings", so in practice it was
@@ -568,7 +552,6 @@
         wrap.querySelector(`[data-lqx-out="${which}"]`).textContent = input.value;
         localStorage.setItem(FABRIC[which].key, input.value);
         window.liquifyFabric?.set({ [which]: parseFloat(input.value) });
-        applyBgStyle();
       });
     }
   }
@@ -591,7 +574,6 @@
     set(strength, speed) {
       if (strength != null) localStorage.setItem(DRIFT_STRENGTH_KEY, String(strength));
       if (speed != null) localStorage.setItem(DRIFT_SPEED_KEY, String(speed));
-      applyBgStyle();
       return driftCfg();
     },
   };

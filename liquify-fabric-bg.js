@@ -89,22 +89,45 @@
   // store is smaller and upscaled), and a CSS filter operates on the element's
   // rendered box -- so this radius is already in screen pixels. An earlier
   // version divided it by RES and wondered why nothing looked blurred.
+  //
+  // And that is exactly why the element has to be BIGGER than the viewport. A
+  // CSS blur is a convolution against the element's OWN rendering, and outside
+  // the element there is nothing to convolve with, so a canvas laid out at
+  // inset:0 fades to transparent over roughly 3 sigma at all four edges of the
+  // screen. Nothing covers those edges except the strips of background between
+  // the panels -- which is the only background there is to look at. Measured at
+  // the default 12px blur, screenshotting the running client: the left gap and
+  // the bottom strip came back at luminance 53 and 17 against 91 for the same
+  // wall a few pixels further in. A 40-80% darkening, running around the whole
+  // frame, on the one part of the background that is visible.
+  //
+  // So the element runs past the viewport far enough that the fade happens
+  // off-screen. The BACKING STORE grows with it -- the shader's cover fit is
+  // computed from the canvas aspect ratio, so growing the box alone would
+  // stretch the art. 2.5 sigma leaves ~1% of the Gaussian outside; at the
+  // default blur that is 38px a side, and at quarter resolution it costs 10
+  // extra pixels of width.
+  const OVER = (px) => Math.ceil(Math.max(0, px) * 2.5) + 8;
   let lastBlur = -1;
   function applyBlur(px) {
     if (px === lastBlur) return;
     lastBlur = px;
+    const o = OVER(px);
     style.textContent = `
-      #lqx-fabric{position:fixed;inset:0;width:100%;height:100%;z-index:0;
+      #lqx-fabric{position:fixed;top:${-o}px;left:${-o}px;
+        width:calc(100% + ${o * 2}px);height:calc(100% + ${o * 2}px);z-index:0;
         pointer-events:none;filter:blur(${px.toFixed(1)}px) brightness(${DIM})}
-      /* NOT display:none. Liquify samples these layers to derive
-         --liquify-accent, and removing them from the render tree left the
-         accent stuck at white until the next track change -- which shows up as
-         selected chips being unreadable white-on-white. They stay in the tree
-         but cost nothing: no filter, no size, fully transparent. */
-      html.lqx-fabric-on .liquify-bg-layer{
-        opacity:0!important;filter:none!important;width:1px!important;
-        height:1px!important;transform:none!important;pointer-events:none!important}
+      /* The theme builds its own background from an async waitFor, so it can
+         create these up to one slow tick after standDownThemeBackground() last
+         ran and show a full-screen dimmed cover until the next one removes
+         them. Scoped to lqx-fabric-on, NOT unconditional: with Distortion at 0
+         this canvas hides itself and the theme's background is meant to come
+         back, and an unscoped rule would leave that user with no background at
+         all. */
+      html.lqx-fabric-on :is(.liquify-bg-layer,.liquify-animated-bg,.liquify-kawarp-bg){
+        display:none!important}
       html.liquify-perf #lqx-fabric{filter:blur(${(px / 2).toFixed(1)}px) brightness(${DIM})}`;
+    resize();
   }
 
   // ---- shader ----
@@ -472,8 +495,9 @@
   // ---- loop ----
   let last = 0, running = false;
   function resize() {
-    const w = Math.max(160, Math.round(window.innerWidth / RES));
-    const h = Math.max(120, Math.round(window.innerHeight / RES));
+    const o = OVER(lastBlur < 0 ? cfg().blur : lastBlur);
+    const w = Math.max(160, Math.round((window.innerWidth + o * 2) / RES));
+    const h = Math.max(120, Math.round((window.innerHeight + o * 2) / RES));
     if (canvas.width !== w || canvas.height !== h) {
       canvas.width = w; canvas.height = h; gl.viewport(0, 0, w, h);
     }
@@ -507,6 +531,11 @@
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texA);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texB);
     mixv += Math.max(-1, Math.min(1, fadeTo - mixv)) * 0.06;   // crossfade on track change
+    // Snap when it is close enough to see, so the glass shader's uniform branch
+    // on uMix can take its one-cover path. A geometric converger never arrives:
+    // left alone it sits a thousandth away from its target for the rest of the
+    // song and keeps both covers being fetched for every tap.
+    if (Math.abs(fadeTo - mixv) < 0.001) mixv = fadeTo;
     gl.uniform1f(uni.mix, mixv);
     gl.uniform1f(uni.t, t);
     const amp = (strength / 100) * 0.55;
@@ -558,11 +587,37 @@
   // resolution. Still a quarter of the pixels of a full-res pass.
   const GLASS_RES = 2;
   const MAXP = 6;
-  // Taps in the blur disc. Eight is where the banding on a smooth gradient
-  // stops being visible at this canvas resolution; more is spending texture
-  // reads on a difference nothing can see.
-  const TAPS = 8;
+  // Taps in the blur disc.
+  //
+  // Sixteen, not eight. Eight was chosen when every tap cost TWO texture reads
+  // -- both covers, blended -- and it showed: the disc has to carry whatever
+  // blur radius the mip cannot, and at eight points a 12px radius is eight
+  // visibly separate copies of the picture rather than a blur. That is the
+  // "choppy" in choppy blur.
+  //
+  // What pays for it is the uniform branch on uMix in samp() below. The
+  // crossfade between the outgoing and incoming cover is only live for about a
+  // second after a track change; outside that, one of the two reads was being
+  // multiplied by zero. Skipping it halves the cost of a tap, so the disc gets
+  // twice the points for the same sixteen reads this pass has always done --
+  // and during the crossfade it briefly costs what three-quarters of a second
+  // of album art is worth.
+  const TAPS = 16;
   const PANELS = ['.Root__nav-bar', '.Root__main-view', '.Root__right-sidebar'];
+
+  // Chromatic aberration, same localStorage key the SVG filter chain in
+  // liquify-perf.js has always used, so the one checkbox drives both: the
+  // shader for the three panels it draws, the SVG for the play bar and the
+  // handful of small surfaces still on backdrop-filter.
+  //
+  // The number is a fraction of the refraction, not a pixel count -- real
+  // dispersion is "red bends less than blue", so the fringe scales with how
+  // hard the glass is bending, which is the Warp slider. It is therefore
+  // exactly zero in the flat middle of a panel and strongest on the rim, with
+  // no test anywhere in the shader to make that true.
+  const CHROMA_KEY = 'liquify-glass-chromatic';
+  const chromaOn = () => localStorage.getItem(CHROMA_KEY) === 'on';
+  const DISPERSION = 0.22;
 
   const gCanvas = document.createElement('canvas');
   gCanvas.id = 'lqx-glass';
@@ -584,7 +639,7 @@
   in vec2 vUv;
   out vec4 outColor;
   uniform sampler2D uA, uB;
-  uniform float uMix, uT, uAmp, uZoom, uLod, uRefract, uTint, uEdge, uSpread;
+  uniform float uMix, uT, uAmp, uZoom, uLod, uRefract, uTint, uEdge, uSpread, uChroma;
   uniform vec2 uCover, uMean, uRes;
   uniform vec4 uGrip[${GRIPS}];
   uniform vec2 uGW[${GRIPS}];
@@ -593,6 +648,48 @@
   uniform int uCount;
 
   ${PULL_GLSL}
+
+  // The tap disc, as constants. The angle and radius depend only on the loop
+  // index, so the sin/cos/sqrt in the loop were computing the same 48 numbers
+  // for every pixel of every frame and hoping the driver would fold them.
+  // Golden-angle spiral: it fills a disc evenly at any count, with no lattice
+  // for the image to alias against.
+  //
+  // RECENTRED so the sixteen offsets sum to zero. A finite golden-angle spiral
+  // does not: these sixteen have a centroid 0.03 of the radius off-centre,
+  // which does two things, one cosmetic and one not. Cosmetic: the blur is
+  // very slightly lopsided, always in the same direction. Not cosmetic: the
+  // dispersion below fits a slope to these offsets, and an uncentred fit of a
+  // FLAT image does not return zero -- it returns the image's own brightness
+  // times the centroid, which is a solid colour cast on the rim rather than a
+  // fringe on an edge. Subtracting the mean costs nothing at run time and
+  // removes the whole class of error at the source; the fit below is centred as
+  // well, so neither depends on the other being right.
+  const vec2 DISC[${TAPS}] = vec2[${TAPS}](
+    vec2( 0.189936, 0.027087), vec2(-0.212612, 0.233913),
+    vec2( 0.047718,-0.366684), vec2( 0.297731, 0.398260),
+    vec2(-0.509063,-0.065287), vec2( 0.507855,-0.287598),
+    vec2(-0.152306, 0.642612), vec2(-0.302402,-0.580507),
+    vec2( 0.697802, 0.277117), vec2(-0.699096, 0.321096),
+    vec2( 0.356514,-0.706642), vec2( 0.266890, 0.836019),
+    vec2(-0.751586,-0.416099), vec2( 0.910294,-0.170145),
+    vec2(-0.534347, 0.805859), vec2(-0.113327,-0.949003));
+
+  // One sample of the artwork at the working mip level.
+  //
+  // The crossfade between the outgoing and incoming cover only runs for a few
+  // hundred milliseconds after a track change. The rest of the time uMix sits
+  // at exactly 0 or 1 and the mix() is a second full texture read whose result
+  // is multiplied by zero -- half of this pass's texture traffic, thrown away,
+  // permanently. Branching on a UNIFORM costs nothing: every invocation in the
+  // draw takes the same side, so there is no warp divergence to pay for, and
+  // textureLod takes an explicit level so it is legal in any control flow
+  // (texture() would not be -- it needs derivatives).
+  vec3 samp(vec2 uv){
+    if (uMix <= 0.001) return textureLod(uA, uv, uLod).rgb;
+    if (uMix >= 0.999) return textureLod(uB, uv, uLod).rgb;
+    return mix(textureLod(uA, uv, uLod), textureLod(uB, uv, uLod), uMix).rgb;
+  }
 
   float sdRound(vec2 p, vec2 halfSize, float r){
     vec2 q = abs(p) - halfSize + r;
@@ -649,10 +746,16 @@
     float ry = 1. - smoothstep(0., uEdge, toEdge.y);
     float rim = 1. - (1. - rx) * (1. - ry);
     vec2 n = normalize(vec2(sign(rel.x) * rx, sign(rel.y) * ry) + 1e-5);
-    vec2 uv0 = vUv + n * rim * uRefract * vec2(1., -1.) / uRes;
+    vec2 bend = n * rim * uRefract * vec2(1., -1.) / uRes;
+    vec2 uv0 = vUv + bend;
 
     vec2 uv = uv0 + (pull(uv0) - uMean);
     vec2 t = (uv-.5)*uCover*uZoom + .5;
+
+    // The same bend in TEXTURE units, which is what the taps are measured in.
+    // uCover*uZoom is the mapping's Jacobian; pull's own gradient is a few
+    // percent and is not worth a second evaluation of pull() to fold in.
+    vec2 bt = bend * uCover * uZoom;
 
     // Blur as a mip level PLUS a tap disc, rather than mip level alone.
     //
@@ -666,14 +769,86 @@
     // So the mip is held to a level that still has detail and the rest of the
     // radius comes from spreading the taps. Points on a golden-angle spiral,
     // which fills a disc evenly at any count without a pattern to alias with.
+    // The same loop also measures the slope of the image along the bend, for
+    // the chromatic fringe, without taking one extra texture fetch.
+    //
+    // Chromatic aberration IS a directional derivative: resampling a channel a
+    // distance s along a direction and subtracting is s*dC/ds to first order.
+    // Sampling three whole discs at three displaced points -- the obvious
+    // implementation -- spends 32 more reads to measure a slope these taps
+    // already straddle. The displacement the fringe wants is a FRACTION of the
+    // disc radius (about half of it at the default blur), so the value being
+    // asked for lies inside the disc: this is interpolation, not extrapolation.
+    //
+    // The fit is least squares rather than a two-point difference: s is each
+    // tap's own offset projected onto the bend. That is what keeps the fringe
+    // from pulsing as a corner turns the bend through ninety degrees and the
+    // sixteen fixed points fall differently against it.
+    //
+    // CENTRED least squares -- the means of s and of c are subtracted. Skipping
+    // that is only valid when sum(s) is zero, and the recentred disc above does
+    // make it zero, but the two guards are independent on purpose: get either
+    // one wrong and an uncentred fit reports a slope for a picture that has
+    // none, which paints the rim a flat colour instead of fringing its edges.
     vec3 acc = vec3(0.);
+    vec3 dacc = vec3(0.);
+    float sacc = 0.;
+    float ss = 0.;
     for (int i=0;i<${TAPS};i++){
-      float a = float(i) * 2.39996323;
-      float rr = sqrt((float(i)+.5)/float(${TAPS}));
-      vec2 off = vec2(cos(a), sin(a)) * rr * uSpread;
-      acc += mix(textureLod(uA,t+off,uLod), textureLod(uB,t+off,uLod), uMix).rgb;
+      vec2 off = DISC[i] * uSpread;
+      vec3 c = samp(t + off);
+      acc += c;
+      float s = dot(off, bt);
+      dacc += c * s;
+      sacc += s;
+      ss += s * s;
     }
-    vec3 col = acc / float(${TAPS});
+    const float N = float(${TAPS});
+    vec3 col = acc / N;
+
+    // Red rides short of the bend, blue past it. The ratio is the slope per
+    // texture unit along bt, and dot(bt,bt) turns it back into the displacement
+    // those two channels actually take; uChroma is what fraction of the bend
+    // that displacement is. Both sums scale as |bt|^2, so projecting onto the
+    // UNnormalised bend and multiplying back recovers it for free and keeps
+    // normalize(), and its zero vector, out of this entirely.
+    //
+    // Exactly zero in the flat middle of a panel with no branch anywhere,
+    // because bt is the zero vector there and every term goes to zero with it.
+    // The 1e-12 is only so the ratio is 0/eps rather than 0/0.
+    //
+    // Clamped because a first-order estimate across a hard edge in the cover
+    // can overshoot the gamut, and a clamp is two instructions.
+    float den = ss - sacc * sacc / N + 1e-12;
+    vec3 fringe = (dacc - acc * (sacc / N)) * (uChroma * dot(bt, bt) / den);
+    col.r -= clamp(fringe.r, -.25, .25);
+    col.b += clamp(fringe.b, -.25, .25);
+
+    // Chromatic aberration.
+    //
+    // Dispersion is not a post-effect smeared over the panel -- it is the same
+    // refraction that produced uv0, evaluated at three wavelengths. So it is
+    // the refraction vector that gets scaled per channel, which means it is
+    // ZERO everywhere rim is zero: the flat middle of a panel does not disperse,
+    // only the curved edge does. That is what makes this cheap enough to leave
+    // on. The rim band is 26px of a canvas whose panels are 194-328px wide, so
+    // roughly a quarter of the drawn pixels reach this at all, and the other
+    // three quarters branch straight past it on a condition that is coherent
+    // across whole blocks of the screen rather than per pixel.
+    //
+    // Three extra reads there, not twenty-four: running the whole tap disc per
+    // channel would triple the pass. Instead the disc is computed once and only
+    // the DIFFERENCE each channel's displacement makes is carried on single
+    // reads. That approximation is exact in the limit of a smooth image and the
+    // image here is already smooth -- uLod is chosen so the mip alone is a
+    // blurred picture -- so what the disc would have added to the difference is
+    // below the quantisation of the frame buffer.
+    if (uChroma > 0. && rim > 0.02) {
+      vec2 dsp = n * rim * uRefract * uChroma * vec2(1., -1.) / uRes * uCover * uZoom;
+      vec3 mid = samp(t);
+      col.r += samp(t + dsp).r - mid.r;
+      col.b += samp(t - dsp).b - mid.b;
+    }
 
     // Brighter than the background it is set into (that layer is dimmed to
     // .45), which is what reads as "this panel is lit from within".
@@ -721,7 +896,8 @@
                cover: U('uCover'), zoom: U('uZoom'), mean: U('uMean'), res: U('uRes'),
                grip: U('uGrip'), gw: U('uGW'), rect: U('uRect'), rad: U('uRad'),
                count: U('uCount'), lod: U('uLod'), refract: U('uRefract'),
-               tint: U('uTint'), edge: U('uEdge'), spread: U('uSpread') };
+               tint: U('uTint'), edge: U('uEdge'), spread: U('uSpread'),
+               chroma: U('uChroma') };
       g2.uniform1i(gUni.A, 0);
       g2.uniform1i(gUni.B, 1);
       g2.enable(g2.BLEND);
@@ -843,17 +1019,46 @@
     // control has to be plumbed through to here or it stops being a setting.
     //
     // Blur is split between the two. The cover is 640px drawn across roughly
-    // 1470, so one screen pixel is about 0.44 texture pixels. The mip carries
-    // the part it can carry without the image getting small -- capped at 3,
-    // which is still an 80px texture -- and the tap disc carries the remainder
-    // as a real spread in texture coordinates.
+    // 1470, so one screen pixel is about 0.44 texture pixels. The tap disc
+    // carries the radius, and the mip is chosen to make the taps JOIN UP.
+    //
+    // That second half used to be log2(rTex) -- the coarsest mip the radius
+    // allows -- and it is what made the blur look chopped. Two separate
+    // artefacts came out of it. A mip that coarse is a small picture magnified:
+    // at blur 12 it read a 128px image across a 656px panel, so the bilinear
+    // upsample showed as soft rectangles. And the taps then sat further apart
+    // than the texels they were fetching, so each one landed as its own visible
+    // copy of the art rather than overlapping its neighbours into a blur.
+    //
+    // The rule instead: N golden-angle points on a disc of radius r sit about
+    // r*sqrt(pi/N) apart, which is 0.44r at sixteen taps, so a texel of r/2 is
+    // just wide enough to close the gaps with margin. That is log2(r) - 1.
     const rTex = Math.max(1, blur) * 0.44;
-    g2.uniform1f(gUni.lod, Math.max(0, Math.min(3, Math.log2(rTex))));
-    g2.uniform1f(gUni.spread, rTex / 640);
+    const spread = rTex / 640;
+    g2.uniform1f(gUni.lod, Math.max(0, Math.min(4, Math.log2(rTex) - 1)));
+    g2.uniform1f(gUni.spread, spread);
     // The rim bend is part of the warp, so it answers to the same slider.
+    //
+    // The band is 52 canvas pixels now rather than 26, and the peak bend is
+    // lower to match. Same idea, half the rate of change: at 26 the whole
+    // deformation happened inside about a finger's width of the panel border
+    // and the middle of a panel was perfectly flat, which is what reads as the
+    // edges being distorted and nothing else. Real glass of any thickness bends
+    // over a distance you can see. Spreading it also spreads the dispersion,
+    // which is measured from this same vector.
     const warp = Math.max(0, Math.min(1, strength / 100));
-    g2.uniform1f(gUni.refract, 26 * warp);
-    g2.uniform1f(gUni.edge, 26);
+    g2.uniform1f(gUni.refract, 20 * warp);
+    g2.uniform1f(gUni.edge, 52);
+    // Dispersion, capped to the disc it is measured on.
+    //
+    // The shader estimates the fringe from the slope across the sixteen taps,
+    // and asking for a displacement wider than that disc is asking it to
+    // extrapolate. The cap is what fades the fringe out below a blur of about
+    // 4, which is also the right look: an image with no blur has no dispersion
+    // to show, and at warp 0 there is no bend to disperse at all.
+    const bendMax = (20 * warp) / gCanvas.width;
+    const cap = bendMax > 1e-6 ? spread / bendMax : 0;
+    g2.uniform1f(gUni.chroma, chromaOn() ? Math.min(DISPERSION, cap) : 0);
     // The SAME dimming as the background, not a step above it.
     //
     // "Lit from within" was a nice idea and the wrong one here: the panels
@@ -869,8 +1074,7 @@
   }
 
   const mount = () => {
-    const layer = [...document.querySelectorAll('.liquify-bg-layer')].pop();
-    const parent = layer?.parentElement || document.querySelector('.Root__top-container');
+    const parent = document.querySelector('.Root__top-container');
     if (!parent) return false;
     if (canvas.parentElement !== parent) parent.insertBefore(canvas, parent.firstChild);
     // Immediately after the background, so it paints over it and under every
@@ -900,42 +1104,64 @@
     if (on && !running) { running = true; resize(); requestAnimationFrame(frame); }
     if (!on) running = false;
   }
-  // ---- stand the theme's own animated background down ----
+  // ---- delete the theme's own background engine ----
   //
-  // Liquify ships its own WebGL background ("Kawarp"), and with
-  // liquify-bg-mode = "animated" it renders full-window -- measured at
-  // 1280x804, i.e. ten times this canvas's 403x253 backing store -- on its own
-  // requestAnimationFrame loop, every frame, underneath #lqx-fabric where none
-  // of it is ever visible.
+  // Liquify's startBackground() builds four things, and this canvas covers all
+  // of them: two crossfading full-window cover layers, a container of four
+  // 1948x1948 tiles each under a 50px blur and a running CSS spin, and a
+  // full-window Kawarp div. Every one of them is prepended to
+  // .Root__top-container, which puts them BELOW #lqx-fabric in the same
+  // stacking context, so not one pixel of any of them has been visible since
+  // this extension shipped.
   //
-  // That is also why the Background section's sliders appeared to do nothing:
-  // Warp Intensity, Animation Speed, Saturation, Scale and Contrast are
-  // Kawarp's controls, and they were faithfully driving a canvas nobody could
-  // see. Switching the mode off "animated" stops that loop and takes those five
-  // rows out of the settings panel, so the only background controls on screen
-  // are the ones below that actually reach this shader.
+  // This used to hide them instead -- opacity:0, 1px, no filter -- on the
+  // stated theory that Liquify samples the layer ELEMENTS to derive
+  // --liquify-accent, so removing them would leave the accent stuck. That was
+  // wrong. applyAccent() takes a URL, and getDominantColor() draws that URL
+  // into an offscreen image (theme.js:2062-2075); the accent never reads the
+  // document. render() writes only to the two elements its closure already
+  // holds, so detaching them leaves it writing to detached nodes rather than
+  // throwing.
   //
-  // "dynamic" is the theme's default: the two crossfading cover layers. They
-  // stay in the render tree (Liquify samples them for --liquify-accent) but
-  // this extension's stylesheet already reduces them to 1px and zero opacity,
-  // so they cost nothing and show nothing.
+  // Verified in the running client before making the change, because "obviously
+  // fine" is how the last two bugs here got shipped: with zero
+  // .liquify-bg-layer elements in the tree, firing
+  // liquifyAccentColorParamsChange still resolved a fresh accent
+  // (rgb(255,89,137)), and eight consecutive ticks of the theme's own 500ms
+  // background interval raised no error and no unhandled rejection.
+  //
+  // The Kawarp loop is separately inert here: syncLoop() only starts a
+  // requestAnimationFrame while this.live is non-empty, and that set is filled
+  // by ensureLayers(), reached only from show(), reached only when the backdrop
+  // resolves to kind "animated". Forcing the mode off "animated" below closes
+  // that door as well, and takes Kawarp's five dead sliders (Warp Intensity,
+  // Animation Speed, Saturation, Scale, Contrast) out of the settings panel --
+  // they were faithfully driving a canvas nobody could see, which is why the
+  // Background section appeared to do nothing.
   //
   // Only done while the fabric background is actually on. Turn Distortion down
-  // to 0 and the setting is left alone, so the theme's own background comes
-  // back rather than being permanently disabled behind the user's back.
+  // to 0 and the theme's own background is left alone rather than being
+  // permanently disabled behind the user's back -- though it will need a reload
+  // to come back, since these nodes are gone for the session.
   const BG_MODE_KEY = 'liquify-bg-mode';
+  const THEME_BG = ['.liquify-bg-layer', '.liquify-animated-bg', '.liquify-kawarp-bg'];
+  let stripped = 0;
   function standDownThemeBackground() {
     if (cfg().strength <= 0) return;
-    if (localStorage.getItem(BG_MODE_KEY) !== 'animated') return;
-    localStorage.setItem(BG_MODE_KEY, 'dynamic');
-    window.dispatchEvent(new Event('liquifyBackgroundChange'));
-    console.log('[liquify-fabric-bg] theme animated background stood down (was covered by this one)');
+    for (const sel of THEME_BG) {
+      for (const el of document.querySelectorAll(sel)) { el.remove(); stripped++; }
+    }
+    if (localStorage.getItem(BG_MODE_KEY) === 'animated') {
+      localStorage.setItem(BG_MODE_KEY, 'dynamic');
+      window.dispatchEvent(new Event('liquifyBackgroundChange'));
+      console.log('[liquify-fabric-bg] theme animated background stood down (was covered by this one)');
+    }
   }
 
   const boot = () => { if (!mount()) return setTimeout(boot, 600); resize(); applyBlur(cfg().blur); apply(); };
   boot();
   standDownThemeBackground();
-  setInterval(() => { mount(); apply(); }, 2000);
+  setInterval(() => { mount(); apply(); standDownThemeBackground(); }, 2000);
 
   window.liquifyFabric = {
     canvas, cfg,
@@ -955,6 +1181,7 @@
       try { frame(performance.now()); } finally { forceFrame = false; }
       return glassFrames;
     },
+    get themeBgRemoved() { return stripped; },
     glass: () => ({
       ready: glassReady, wanted: glassWanted(), panels: panelCount,
       mounted: !!gCanvas.parentElement, size: [gCanvas.width, gCanvas.height],
