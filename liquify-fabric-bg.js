@@ -71,6 +71,12 @@
   // blurred it gets.
   const ZOOM = 1.0;
 
+  // How far the background is dimmed. Named because TWO passes need it now: the
+  // CSS filter on the background canvas, and the glass pass, which has to sit a
+  // known amount brighter than the wall it is set into rather than at some
+  // number that happened to look right once.
+  const DIM = 0.45;
+
   const canvas = document.createElement('canvas');
   canvas.id = 'lqx-fabric';
   const gl = canvas.getContext('webgl2', { alpha: true, antialias: false, depth: false });
@@ -89,7 +95,7 @@
     lastBlur = px;
     style.textContent = `
       #lqx-fabric{position:fixed;inset:0;width:100%;height:100%;z-index:0;
-        pointer-events:none;filter:blur(${px.toFixed(1)}px) brightness(.45)}
+        pointer-events:none;filter:blur(${px.toFixed(1)}px) brightness(${DIM})}
       /* NOT display:none. Liquify samples these layers to derive
          --liquify-accent, and removing them from the render tree left the
          accent stuck at white until the next track change -- which shows up as
@@ -98,10 +104,43 @@
       html.lqx-fabric-on .liquify-bg-layer{
         opacity:0!important;filter:none!important;width:1px!important;
         height:1px!important;transform:none!important;pointer-events:none!important}
-      html.liquify-perf #lqx-fabric{filter:blur(${(px / 2).toFixed(1)}px) brightness(.45)}`;
+      html.liquify-perf #lqx-fabric{filter:blur(${(px / 2).toFixed(1)}px) brightness(${DIM})}`;
   }
 
   // ---- shader ----
+
+  // The warp, as one source string, because TWO passes evaluate it now: the
+  // background, and the glass pass below. If they ever disagreed by a single
+  // term the glass would show a differently-deformed image than the wall it is
+  // set into, and the panels would look like windows onto another room.
+  const PULL_GLSL = `
+  // One smooth function of position, evaluated per pixel. Every term is
+  // C-infinity: a Gaussian has no cutoff ridge and no singularity at its
+  // centre, so there is no place in the frame where the deformation can kink.
+  vec2 pull(vec2 p){
+    vec2 d = vec2(0.);
+    for (int i=0;i<${GRIPS};i++){
+      vec2 q = p - uGrip[i].xy;
+      d += uGrip[i].zw * exp(-dot(q,q)/(uGW[i].y*uGW[i].y)*2.2) * uGW[i].x;
+    }
+    // a slow whole-sheet swell so nothing is ever completely still
+    d += 0.18*vec2(sin(p.y*2.3 + uT*0.21), cos(p.x*1.9 - uT*0.17));
+    // and a second, even lower-frequency term on a different period
+    d += 0.12*vec2(cos(p.x*1.3 - uT*0.13), sin(p.y*1.1 + uT*0.11));
+    // Pinned at the frame. Everything the pull drags past the texture border
+    // is either a smeared edge pixel or a mirrored copy of the cover, and the
+    // comment above the ZOOM constant picks the smear on the grounds that it
+    // "is indistinguishable from the image simply continuing" under this much
+    // blur -- which was true at a background blur of 38 and is not true at 12.
+    // Rather than re-litigate which artefact is prettier, this removes the
+    // question: taper the deformation to zero at the edge and the sample never
+    // leaves the texture, so there is no outside to define. The interior keeps
+    // the full warp, and a sheet that is still at its frame and moving in the
+    // middle is what a sheet held at its frame actually does.
+    vec2 edge = smoothstep(vec2(0.), vec2(0.17), p) * smoothstep(vec2(0.), vec2(0.17), 1.-p);
+    return d*uAmp*edge.x*edge.y;
+  }`;
+
   const VS = `#version 300 es
   const vec2 P[3] = vec2[3](vec2(-1.,-1.), vec2(3.,-1.), vec2(-1.,3.));
   out vec2 vUv;
@@ -119,21 +158,7 @@
   uniform vec4 uGrip[${GRIPS}];   // xy = grip point, zw = pull direction
   uniform vec2 uGW[${GRIPS}];     // x = weight, y = reach
 
-  // One smooth function of position, evaluated per pixel. Every term is C-infinity:
-  // a Gaussian has no cutoff ridge and no singularity at its centre, so there is
-  // no place in the frame where the deformation can kink.
-  vec2 pull(vec2 p){
-    vec2 d = vec2(0.);
-    for (int i=0;i<${GRIPS};i++){
-      vec2 q = p - uGrip[i].xy;
-      d += uGrip[i].zw * exp(-dot(q,q)/(uGW[i].y*uGW[i].y)*2.2) * uGW[i].x;
-    }
-    // a slow whole-sheet swell so nothing is ever completely still
-    d += 0.18*vec2(sin(p.y*2.3 + uT*0.21), cos(p.x*1.9 - uT*0.17));
-    // and a second, even lower-frequency term on a different period
-    d += 0.12*vec2(cos(p.x*1.3 - uT*0.13), sin(p.y*1.1 + uT*0.11));
-    return d*uAmp;
-  }
+  ${PULL_GLSL}
 
   void main(){
     // Subtracting the frame average makes the field mean-zero, i.e. pure
@@ -223,6 +248,9 @@
     return raw.startsWith('spotify:image:') ? 'https://i.scdn.co/image/' + raw.slice(14) : raw;
   };
   let lastUrl = '', toB = true;
+  // Kept so a glass context that was lost and restored can be refilled without
+  // waiting for the next track.
+  let lastImg = null;
 
   // Name That Tune blanks the cover art, the track name and the play bar for
   // the song you are meant to guess -- and then this background painted that
@@ -298,6 +326,7 @@
       i.src = url;
     });
     if (!img) return;
+    lastImg = img;
     // Set immediately before the upload rather than once at startup: this is
     // context state, and a context loss silently returns it to false.
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
@@ -305,6 +334,7 @@
     gl.activeTexture(toB ? gl.TEXTURE1 : gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, target);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+    glassUpload(img, toB, !haveArt);
     if (!haveArt) {                       // first track: fill both, no crossfade
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texA);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
@@ -420,7 +450,13 @@
     dy += 0.18 * Math.cos(px * 1.9 - t * 0.17);
     dx += 0.12 * Math.cos(px * 1.3 - t * 0.13);
     dy += 0.12 * Math.sin(py * 1.1 + t * 0.11);
-    return [dx * amp, dy * amp];
+    // The edge taper, matching the shader exactly. If only one of the two
+    // carried it the subtracted frame average would no longer be the average of
+    // the field actually applied, and the mean-zero property that keeps the
+    // composition from sliding off the texture would be quietly wrong.
+    const sm = (x) => { const c = Math.max(0, Math.min(1, x)); return c * c * (3 - 2 * c); };
+    const e = sm(px / 0.17) * sm((1 - px) / 0.17) * sm(py / 0.17) * sm((1 - py) / 0.17);
+    return [dx * amp * e, dy * amp * e];
   }
   function meanPull(g, w, t, amp) {
     let sx = 0, sy = 0, n = 0;
@@ -443,13 +479,20 @@
     }
   }
   window.addEventListener('resize', resize);
+  window.addEventListener('resize', () => { glassResize(); measurePanels(); });
+
+  // Set only by renderOnce below. The loop deliberately does nothing while the
+  // window is hidden, which is also the state any remote debugging session is
+  // in by definition -- so without a way to override it, a rendering change
+  // cannot be tested at all except by asking someone to look at the screen.
+  let forceFrame = false;
 
   function frame(now) {
-    if (!running) return;
-    requestAnimationFrame(frame);
+    if (!running && !forceFrame) return;
+    if (!forceFrame) requestAnimationFrame(frame);
     const { strength, speed, blur, fps } = cfg();
-    if (document.hidden || strength <= 0 || !haveArt) return;
-    if (now - last < 1000 / fps) return;
+    if ((document.hidden && !forceFrame) || strength <= 0 || !haveArt) return;
+    if (!forceFrame && now - last < 1000 / fps) return;
     last = now;
     resize();
     applyBlur(blur);
@@ -475,6 +518,323 @@
     gl.uniform4fv(uni.grip, g);
     gl.uniform2fv(uni.gw, w);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    // Same frame, same warp state, same instant -- which is the whole reason
+    // this lives in here rather than running its own loop.
+    if (glassWanted()) drawGlass(t, g, w, mx, my, amp, mixv, blur, strength);
+  }
+
+  // ---- glass pass ---------------------------------------------------------
+  //
+  // The chrome panels -- nav bar, main view, right sidebar -- are transparent
+  // boxes with a rim and no backdrop-filter of their own. Giving them one is a
+  // single CSS rule, and it was measured: on-screen filtered area goes from
+  // 0.10 megapixels to 1.37, which is 101% of the viewport, because those three
+  // panels tile the screen. Every one of those pixels re-composites on every
+  // frame the background moves, and this background moves continuously.
+  //
+  // So the glass for those three is drawn HERE instead, into a second canvas
+  // that sits between the background and the DOM. It costs one texture read per
+  // pixel in a pass at half resolution, against a full-viewport composite of
+  // separately-filtered surfaces. Same picture, a fraction of the work.
+  //
+  // WHAT THIS CANNOT DO, and it is a hard limit rather than a missing feature:
+  // a canvas is at the BOTTOM of the stack, so anything painted into it is
+  // behind all DOM. It can only stand in for a panel that has nothing but the
+  // background behind it. The play bar floats over the main view's track list,
+  // so its glass has to keep refracting real DOM pixels and stays on
+  // backdrop-filter -- it is 0.09 megapixels, which is not worth solving. Same
+  // for menus, tooltips and modals. This is the same wall the earlier
+  // liquify-glass-gl attempt hit from the other side: a WebGL canvas cannot
+  // sample DOM pixels.
+  //
+  // Turn off with localStorage liquify-shader-glass = 'off'.
+  const GLASS_KEY = 'liquify-shader-glass';
+  const glassWanted = () => localStorage.getItem(GLASS_KEY) !== 'off';
+
+  // Half resolution rather than the background's quarter. The background can be
+  // coarse because a CSS blur is smeared over it afterwards; this canvas has no
+  // filter on it at all, so its panel EDGES are visible and want the extra
+  // resolution. Still a quarter of the pixels of a full-res pass.
+  const GLASS_RES = 2;
+  const MAXP = 6;
+  const PANELS = ['.Root__nav-bar', '.Root__main-view', '.Root__right-sidebar'];
+
+  const gCanvas = document.createElement('canvas');
+  gCanvas.id = 'lqx-glass';
+  const g2 = gCanvas.getContext('webgl2', { alpha: true, antialias: false, depth: false });
+
+  const glassStyle = document.createElement('style');
+  glassStyle.id = 'lqx-glass-style';
+  glassStyle.textContent =
+    `#lqx-glass{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none}` +
+    // The panels must not ALSO filter their own backdrop: that would blur the
+    // glass this pass just drew for them, on top of blurring the background,
+    // and put back the very cost this exists to avoid.
+    `html.lqx-glass-on :is(${PANELS.join(',')}){backdrop-filter:none!important;` +
+    `-webkit-backdrop-filter:none!important}`;
+  document.head.appendChild(glassStyle);
+
+  const GFS = `#version 300 es
+  precision highp float;
+  in vec2 vUv;
+  out vec4 outColor;
+  uniform sampler2D uA, uB;
+  uniform float uMix, uT, uAmp, uZoom, uLod, uRefract, uTint, uEdge;
+  uniform vec2 uCover, uMean, uRes;
+  uniform vec4 uGrip[${GRIPS}];
+  uniform vec2 uGW[${GRIPS}];
+  uniform vec4 uRect[${MAXP}];    // xy = top-left, zw = size, in canvas pixels
+  uniform float uRad[${MAXP}];
+  uniform int uCount;
+
+  ${PULL_GLSL}
+
+  float sdRound(vec2 p, vec2 halfSize, float r){
+    vec2 q = abs(p) - halfSize + r;
+    return min(max(q.x, q.y), 0.) + length(max(q, vec2(0.))) - r;
+  }
+
+  // Distance to the nearest panel edge: negative inside, positive outside.
+  // The out-parameter reports the panel that owns that distance, because the
+  // refraction below needs that rectangle's own geometry, not just how far
+  // away it is.
+  float panels(vec2 fp, out int which){
+    float d = 1e9;
+    which = 0;
+    for (int i=0;i<${MAXP};i++){
+      if (i >= uCount) break;
+      vec4 r = uRect[i];
+      float di = sdRound(fp - (r.xy + r.zw*.5), r.zw*.5, uRad[i]);
+      if (di < d) { d = di; which = i; }
+    }
+    return d;
+  }
+
+  void main(){
+    // Canvas pixels, y down, to match the rectangles handed in from layout.
+    vec2 fp = vec2(vUv.x, 1.-vUv.y) * uRes;
+    int hit;
+    float d = panels(fp, hit);
+    // One pixel of feather, so the rounded corners are not staircases.
+    float inside = 1. - smoothstep(-1., 0., d);
+    if (inside <= 0.002) { outColor = vec4(0.); return; }
+
+    // Refraction. A slab of glass bends hardest where it curves, which is at
+    // its edge, so the sample is pushed outward by an amount that falls off
+    // with depth.
+    //
+    // NOT from the distance field, which is the obvious way and is wrong. A
+    // rounded-box SDF is exact outside the box and only approximate inside it:
+    // the interior term is min(max(q.x,q.y),0), and max() has a gradient
+    // discontinuity where q.x == q.y -- the 45-degree diagonal out of each
+    // corner. The mask above only reads the field within a pixel of the border,
+    // where it is accurate, but a rim that falls off over 26px reads it deep
+    // inside, and the discontinuity shows up as a visible crease running
+    // diagonally from every corner.
+    //
+    // So the rim is built per axis instead, from the distance to each pair of
+    // edges, and combined as a smooth union rather than a max. Two ramps
+    // multiplied have no seam anywhere, the corner blends both directions
+    // naturally, and it drops the four extra field evaluations the numeric
+    // gradient needed.
+    vec2 half2 = uRect[hit].zw * .5;
+    vec2 rel = fp - (uRect[hit].xy + half2);
+    vec2 toEdge = half2 - abs(rel);
+    float rx = 1. - smoothstep(0., uEdge, toEdge.x);
+    float ry = 1. - smoothstep(0., uEdge, toEdge.y);
+    float rim = 1. - (1. - rx) * (1. - ry);
+    vec2 n = normalize(vec2(sign(rel.x) * rx, sign(rel.y) * ry) + 1e-5);
+    vec2 uv0 = vUv + n * rim * uRefract * vec2(1., -1.) / uRes;
+
+    vec2 uv = uv0 + (pull(uv0) - uMean);
+    vec2 t = (uv-.5)*uCover*uZoom + .5;
+    // Mip level instead of a tap loop: the blur is one filtered read rather
+    // than nine, and the hardware is already building the chain.
+    vec3 col = mix(textureLod(uA,t,uLod), textureLod(uB,t,uLod), uMix).rgb;
+
+    // Brighter than the background it is set into (that layer is dimmed to
+    // .45), which is what reads as "this panel is lit from within".
+    col *= uTint;
+    // A cool sheen along the rim, strongest where the refraction is.
+    col += rim * rim * 0.06;
+    outColor = vec4(col * inside, inside);   // premultiplied
+  }`;
+
+  let gProg, gUni, gTexA, gTexB, glassReady = false;
+
+  const gMkTex = () => {
+    const t = g2.createTexture();
+    g2.bindTexture(g2.TEXTURE_2D, t);
+    g2.texParameteri(g2.TEXTURE_2D, g2.TEXTURE_WRAP_S, g2.CLAMP_TO_EDGE);
+    g2.texParameteri(g2.TEXTURE_2D, g2.TEXTURE_WRAP_T, g2.CLAMP_TO_EDGE);
+    // The mip chain IS the blur, so it has to be filtered between levels as
+    // well as within one, or the glass steps between blur radii as the warp
+    // moves the sample across a level boundary.
+    g2.texParameteri(g2.TEXTURE_2D, g2.TEXTURE_MIN_FILTER, g2.LINEAR_MIPMAP_LINEAR);
+    g2.texParameteri(g2.TEXTURE_2D, g2.TEXTURE_MAG_FILTER, g2.LINEAR);
+    g2.texImage2D(g2.TEXTURE_2D, 0, g2.RGBA, 1, 1, 0, g2.RGBA, g2.UNSIGNED_BYTE,
+                  new Uint8Array([0, 0, 0, 255]));
+    g2.generateMipmap(g2.TEXTURE_2D);
+    return t;
+  };
+
+  function initGlass() {
+    if (!g2) return false;
+    try {
+      const compileG = (type, src) => {
+        const sh = g2.createShader(type);
+        g2.shaderSource(sh, src); g2.compileShader(sh);
+        if (!g2.getShaderParameter(sh, g2.COMPILE_STATUS)) throw new Error(g2.getShaderInfoLog(sh));
+        return sh;
+      };
+      gProg = g2.createProgram();
+      g2.attachShader(gProg, compileG(g2.VERTEX_SHADER, VS));
+      g2.attachShader(gProg, compileG(g2.FRAGMENT_SHADER, GFS));
+      g2.linkProgram(gProg);
+      if (!g2.getProgramParameter(gProg, g2.LINK_STATUS)) throw new Error(g2.getProgramInfoLog(gProg));
+      g2.useProgram(gProg);
+      const U = (n) => g2.getUniformLocation(gProg, n);
+      gUni = { A: U('uA'), B: U('uB'), mix: U('uMix'), t: U('uT'), amp: U('uAmp'),
+               cover: U('uCover'), zoom: U('uZoom'), mean: U('uMean'), res: U('uRes'),
+               grip: U('uGrip'), gw: U('uGW'), rect: U('uRect'), rad: U('uRad'),
+               count: U('uCount'), lod: U('uLod'), refract: U('uRefract'),
+               tint: U('uTint'), edge: U('uEdge') };
+      g2.uniform1i(gUni.A, 0);
+      g2.uniform1i(gUni.B, 1);
+      g2.enable(g2.BLEND);
+      g2.blendFunc(g2.ONE, g2.ONE_MINUS_SRC_ALPHA);   // premultiplied
+      gTexA = gMkTex();
+      gTexB = gMkTex();
+      glassReady = true;
+      return true;
+    } catch (err) {
+      console.warn('[liquify-fabric-bg] glass pass unavailable:', err.message);
+      glassReady = false;
+      return false;
+    }
+  }
+  initGlass();
+
+  gCanvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); glassReady = false; });
+  gCanvas.addEventListener('webglcontextrestored', () => {
+    if (initGlass()) glassUpload(lastImg, false, true);
+  });
+
+  // The same cover, uploaded again. Two contexts cannot share a texture, so the
+  // choice is a second upload per track change or a second copy of the whole
+  // background pass -- and an upload of one 640px image every few minutes is
+  // the cheaper of those by a wide margin.
+  function glassUpload(img, toB, both) {
+    if (!glassReady || !img) return;
+    g2.pixelStorei(g2.UNPACK_FLIP_Y_WEBGL, true);
+    const target = toB ? gTexB : gTexA;
+    g2.activeTexture(toB ? g2.TEXTURE1 : g2.TEXTURE0);
+    g2.bindTexture(g2.TEXTURE_2D, target);
+    g2.texImage2D(g2.TEXTURE_2D, 0, g2.RGBA, g2.RGBA, g2.UNSIGNED_BYTE, img);
+    g2.generateMipmap(g2.TEXTURE_2D);
+    if (both) {
+      g2.activeTexture(g2.TEXTURE0); g2.bindTexture(g2.TEXTURE_2D, gTexA);
+      g2.texImage2D(g2.TEXTURE_2D, 0, g2.RGBA, g2.RGBA, g2.UNSIGNED_BYTE, img);
+      g2.generateMipmap(g2.TEXTURE_2D);
+    }
+  }
+
+  // Panel geometry, read from layout rather than assumed.
+  //
+  // Watched rather than polled: a ResizeObserver fires exactly when one of
+  // these boxes changes and never otherwise, which matters because the main
+  // view's width changes the moment the friend feed opens or closes. Reading
+  // the rectangles in the frame loop instead would be a forced layout sixty
+  // times a second to learn a number that changes a few times an hour.
+  const rectBuf = new Float32Array(MAXP * 4);
+  const radBuf = new Float32Array(MAXP);
+  let panelCount = 0;
+  function measurePanels() {
+    let n = 0;
+    for (const sel of PANELS) {
+      if (n >= MAXP) break;
+      const el = document.querySelector(sel);
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 8 || r.height < 8) continue;
+      rectBuf[n * 4] = r.left / GLASS_RES;
+      rectBuf[n * 4 + 1] = r.top / GLASS_RES;
+      rectBuf[n * 4 + 2] = r.width / GLASS_RES;
+      rectBuf[n * 4 + 3] = r.height / GLASS_RES;
+      radBuf[n] = (parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0) / GLASS_RES;
+      n++;
+    }
+    panelCount = n;
+  }
+
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(() => measurePanels());
+    // The panels are created and destroyed as routes change, so the set to
+    // watch is re-checked on the same slow tick that re-mounts the canvas.
+    const watched = new WeakSet();
+    const watch = () => {
+      for (const sel of PANELS) {
+        const el = document.querySelector(sel);
+        if (el && !watched.has(el)) { watched.add(el); ro.observe(el); }
+      }
+    };
+    watch();
+    setInterval(watch, 2000);
+  }
+
+  function glassResize() {
+    const w = Math.max(160, Math.round(window.innerWidth / GLASS_RES));
+    const h = Math.max(120, Math.round(window.innerHeight / GLASS_RES));
+    if (gCanvas.width !== w || gCanvas.height !== h) {
+      gCanvas.width = w; gCanvas.height = h; g2.viewport(0, 0, w, h);
+    }
+  }
+
+  let glassFrames = 0;
+  function drawGlass(t, g, w, mx, my, amp, mixNow, blur, strength) {
+    if (!glassReady || !panelCount) return;
+    glassFrames++;
+    glassResize();
+    const A = gCanvas.width / gCanvas.height;
+    g2.useProgram(gProg);
+    g2.activeTexture(g2.TEXTURE0); g2.bindTexture(g2.TEXTURE_2D, gTexA);
+    g2.activeTexture(g2.TEXTURE1); g2.bindTexture(g2.TEXTURE_2D, gTexB);
+    g2.uniform1f(gUni.mix, mixNow);
+    g2.uniform1f(gUni.t, t);
+    g2.uniform1f(gUni.amp, amp);
+    g2.uniform2f(gUni.mean, mx, my);
+    g2.uniform2f(gUni.cover, 1, 1 / A);
+    g2.uniform1f(gUni.zoom, ZOOM);
+    g2.uniform2f(gUni.res, gCanvas.width, gCanvas.height);
+    g2.uniform4fv(gUni.grip, g);
+    g2.uniform2fv(gUni.gw, w);
+    g2.uniform4fv(gUni.rect, rectBuf);
+    g2.uniform1fv(gUni.rad, radBuf);
+    g2.uniform1i(gUni.count, panelCount);
+    // Driven by the Background settings, not by constants.
+    //
+    // This matters far more than it looks: the three panels cover about 95% of
+    // the window, so once this pass draws them, hardcoding its look here means
+    // the Blur and Warp sliders visibly do nothing -- they would only still
+    // reach the few slivers of background between panels. Anything the sliders
+    // control has to be plumbed through to here or it stops being a setting.
+    //
+    // Blur maps to a mip level: the cover is 640px drawn across roughly 1470,
+    // so a screen-pixel radius is about 0.44 texture pixels, and a mip level is
+    // a doubling. log2 of the radius lands within a hair of the 3.6 that was
+    // tuned by eye at the default blur of 12, which is the arithmetic agreeing
+    // with the eye rather than a coincidence worth relying on.
+    g2.uniform1f(gUni.lod, Math.max(0, Math.min(8, Math.log2(Math.max(1, blur)))));
+    // The rim bend is part of the warp, so it answers to the same slider.
+    const warp = Math.max(0, Math.min(1, strength / 100));
+    g2.uniform1f(gUni.refract, 26 * warp);
+    g2.uniform1f(gUni.edge, 26);
+    // Lit from within: a fixed step above whatever the background is dimmed to.
+    g2.uniform1f(gUni.tint, DIM * 1.38);
+    g2.clearColor(0, 0, 0, 0);
+    g2.clear(g2.COLOR_BUFFER_BIT);
+    g2.drawArrays(g2.TRIANGLES, 0, 3);
   }
 
   const mount = () => {
@@ -482,6 +842,11 @@
     const parent = layer?.parentElement || document.querySelector('.Root__top-container');
     if (!parent) return false;
     if (canvas.parentElement !== parent) parent.insertBefore(canvas, parent.firstChild);
+    // Immediately after the background, so it paints over it and under every
+    // piece of DOM -- which is exactly the slot a panel's backdrop occupies.
+    if (gCanvas.parentElement !== parent || gCanvas.previousSibling !== canvas) {
+      parent.insertBefore(gCanvas, canvas.nextSibling);
+    }
     return true;
   };
   function apply() {
@@ -496,6 +861,11 @@
     applyBlur(cfg().blur);
     document.documentElement.classList.toggle('lqx-fabric-on', on);
     canvas.style.display = on ? '' : 'none';
+
+    const gOn = on && glassReady && glassWanted();
+    document.documentElement.classList.toggle('lqx-glass-on', gOn);
+    gCanvas.style.display = gOn ? '' : 'none';
+    if (gOn) measurePanels();
     if (on && !running) { running = true; resize(); requestAnimationFrame(frame); }
     if (!on) running = false;
   }
@@ -544,6 +914,24 @@
     // right art up" stops being answerable by looking at the now playing bar.
     get art() { return lastUrl; },
     get held() { return holding(); },
+    // The glass pass renders into its own context and its own canvas, so when
+    // it shows nothing there is no way to tell from the page whether it failed
+    // to compile, failed to find its panels, or simply never ran.
+    // Draws one frame with the visibility check bypassed; returns whether the
+    // glass pass got as far as drawing.
+    drawOnce: () => {
+      forceFrame = true;
+      try { frame(performance.now()); } finally { forceFrame = false; }
+      return glassFrames;
+    },
+    glass: () => ({
+      ready: glassReady, wanted: glassWanted(), panels: panelCount,
+      mounted: !!gCanvas.parentElement, size: [gCanvas.width, gCanvas.height],
+      display: gCanvas.style.display, cls: document.documentElement.classList.contains('lqx-glass-on'),
+      rects: Array.from(rectBuf.slice(0, panelCount * 4)),
+      rads: Array.from(radBuf.slice(0, panelCount)),
+      frames: glassFrames,
+    }),
     set: (o = {}) => {
       const map = { strength: STRENGTH_KEY, speed: SPEED_KEY, blur: BLUR_KEY, fps: FPS_KEY };
       for (const k of Object.keys(map)) if (o[k] != null) localStorage.setItem(map[k], String(o[k]));

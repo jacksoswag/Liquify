@@ -429,7 +429,21 @@
     .lqx-settings-tab.active{background:rgba(255,255,255,.22);color:#fff}
     /* Liquify's overlay is positioned for its own gear; centre it like the
        lyrics panel so the two tabs land in the same place on screen */
-    ${LQ_OVERLAY} ${LQ_PANEL}{margin:0 auto}`;
+    ${LQ_OVERLAY} ${LQ_PANEL}{margin:0 auto}
+
+    /* The settings panel ships fully transparent, which was survivable when it
+       opened over a flat background and is not now: it opens over a track list,
+       and two sets of text at the same size occupying the same pixels is
+       unreadable -- it reads as noise rather than as a panel.
+       This is a real backdrop-filter rather than the shader pass, and it has to
+       be: the panel floats over DOM, and the shader draws behind all DOM. One
+       modal-sized surface that exists only while the panel is open is exactly
+       the case backdrop-filter is still the right tool for. */
+    ${LQ_OVERLAY} ${LQ_PANEL}{
+      backdrop-filter:blur(26px) saturate(1.3) brightness(.55);
+      -webkit-backdrop-filter:blur(26px) saturate(1.3) brightness(.55);
+      background:color-mix(in srgb, var(--spice-main) 34%, transparent);
+      border-radius:18px}`;
   document.head.appendChild(settingsStyle);
 
   window.liquifyUiTweaks = { sweep, HIDE_CHIPS };
