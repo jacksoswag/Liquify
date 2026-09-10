@@ -349,6 +349,24 @@
     if (!onNttRoute()) return;
     document.body.classList.add('name-that-tune');
     if (!nttRevealed()) document.body.classList.add('name-that-tune--guessing');
+    stripNttTitle();
+  }
+
+  // The game's heading is "\u{1F3B5} Name That Tune", with the emoji baked into
+  // its translation string rather than rendered as a separate node, so there is
+  // nothing for CSS to hide -- it is a leading character of a text node.
+  //
+  // Done from the DOM rather than by patching the app's i18n: the string is
+  // inside a minified bundle any update would replace, and React never reads
+  // the DOM back, so the shortened text survives every re-render of the same
+  // component. Only a remount brings it back, which is what the observer above
+  // is for. Matched by "leading run of non-letters" rather than by the specific
+  // emoji, so a change of emoji in some later version still gets caught.
+  function stripNttTitle() {
+    const h = document.querySelector('.name-that-tune-module__title');
+    if (!h) return;
+    const clean = h.textContent.replace(/^[^\p{L}\p{N}]+/u, '');
+    if (clean && clean !== h.textContent) h.textContent = clean;
   }
 
   // The one case add-only cannot reach: booting onto the route with the game
