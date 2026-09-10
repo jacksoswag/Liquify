@@ -17,8 +17,11 @@
 //    inside the filter graph, and stock Liquify regenerates it from a
 //    ResizeObserver on every element resize. A raster blit is far cheaper.
 //
-// Small controls drop the chromatic-aberration passes (9 primitives -> 2); the
-// RGB fringe is sub-pixel at button size and the 2px output blur erases it.
+// There is no chromatic-aberration path any more. The filter had a second form
+// that ran the displacement three times, once per colour channel, for an RGB
+// fringe; it cost 32 GPU points measured, it was sub-pixel on anything smaller
+// than the play bar, and every attempt to make it worth that price either
+// stayed invisible or took the app to 90% GPU. One filter, one pass.
 
 (function liquifyPerf() {
   const NS = 'http://www.w3.org/2000/svg';
@@ -53,25 +56,13 @@
     return c.toDataURL('image/png');
   }
 
-  function buildFilter(id, { scale, chroma, href, post }) {
+  function buildFilter(id, { scale, href, post }) {
     const f = fe('filter', { id, 'color-interpolation-filters': 'sRGB', x: '0%', y: '0%', width: '100%', height: '100%' });
     const img = fe('feImage', { x: '0', y: '0', width: '100%', height: '100%', preserveAspectRatio: 'none', result: 'map' });
     img.setAttribute('href', href);
     img.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', href);
     f.appendChild(img);
-    if (chroma) {
-      for (const [n, off, m] of [
-        ['Red', 0, '1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0'],
-        ['Green', 6, '0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0'],
-        ['Blue', 10, '0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0']]) {
-        f.appendChild(fe('feDisplacementMap', { in: 'SourceGraphic', in2: 'map', scale: String(scale + off), xChannelSelector: 'R', yChannelSelector: 'G', result: 'd' + n }));
-        f.appendChild(fe('feColorMatrix', { in: 'd' + n, type: 'matrix', values: m, result: n.toLowerCase() }));
-      }
-      f.appendChild(fe('feBlend', { in: 'red', in2: 'green', mode: 'screen', result: 'rg' }));
-      f.appendChild(fe('feBlend', { in: 'rg', in2: 'blue', mode: 'screen', result: 'out' }));
-    } else {
-      f.appendChild(fe('feDisplacementMap', { in: 'SourceGraphic', in2: 'map', scale: String(scale + 5), xChannelSelector: 'R', yChannelSelector: 'G', result: 'out' }));
-    }
+    f.appendChild(fe('feDisplacementMap', { in: 'SourceGraphic', in2: 'map', scale: String(scale + 5), xChannelSelector: 'R', yChannelSelector: 'G', result: 'out' }));
     if (post) f.appendChild(fe('feGaussianBlur', { in: 'out', stdDeviation: String(post) }));
     return f;
   }
@@ -80,8 +71,7 @@
   host.setAttribute('style', 'position:fixed;top:0;left:0;width:0;height:0;pointer-events:none');
   const defs = document.createElementNS(NS, 'defs');
   const map = rasterMap(400, 200, 20, 0.035, 2);
-  defs.appendChild(buildFilter(ID + '-hi', { scale: -80, chroma: true,  href: map, post: 0.2 }));
-  defs.appendChild(buildFilter(ID + '-lo', { scale: -80, chroma: false, href: map, post: 0 }));
+  defs.appendChild(buildFilter(ID + '-glass', { scale: -80, href: map, post: 0 }));
 
   // ---- the evolving background lives in liquify-fabric-bg.js ----
   //
@@ -100,12 +90,6 @@
   // by the sliders in Liquify's settings panel and are read by that extension.
 
   // ---- drift settings (persisted; also exposed in Liquify's settings panel) ----
-  // One key, one implementation. It used to be two -- a fragment-shader fringe
-  // on the three big containers and this chain on everything else -- which
-  // meant the theme had two different ideas of what glass looked like depending
-  // on which surface you were looking at. The shader's is gone.
-  const CHROMA_KEY = 'liquify-glass-chromatic';          // 'on' | 'off'
-  const chromaOn = () => localStorage.getItem(CHROMA_KEY) === 'on';
   const DRIFT_STRENGTH_KEY = 'liquify-drift-strength';   // 0-100, 0 = off
   const DRIFT_SPEED_KEY    = 'liquify-drift-speed';      // 1-100, higher = faster
   const readNum = (k, dflt) => { const v = parseFloat(localStorage.getItem(k)); return Number.isFinite(v) ? v : dflt; };
@@ -117,96 +101,31 @@
   host.appendChild(defs);
   document.body.appendChild(host);
 
-  // ---- one glass, everywhere ----
-  //
-  // Every UI panel gets the SAME filter the play bar has always had: the
-  // three-pass chromatic displacement chain, #lqx-hi. There is no second
-  // algorithm any more. The shader used to draw its own fringe on the three
-  // big containers and the small controls were downgraded to a cheap
-  // single-pass filter, so the theme had three different ideas of what glass
-  // looked like depending on which surface you were looking at.
-  //
-  // Why this needs a selector list of its own: the theme ships one, 89
-  // selectors, and EIGHTY of them match nothing on Spotify 1.2.99 -- checked
-  // against the live DOM. They are hashed class names from an older build.
-  // That, not the filter, is why the effect appeared on almost nothing: nine
-  // selectors survived, and the widest of them was the play bar. The list
-  // below was read off the running client, and every entry in it was verified
-  // to match something.
-  //
-  // Nothing here selects an image. Album art, artist banners and any element
-  // whose background is a url() are excluded outright by the :not() below --
-  // a displacement filter on a photograph reads as a rendering fault, not as
-  // glass.
-  const PANELS = [
-    // the chrome itself
-    '.Root__nav-bar', '.Root__main-view', '.Root__right-sidebar',
-    '.Root__now-playing-bar', '.Root__right-sidebar-overlayWrapper',
-    '.main-topBar-background', '.main-topBar-searchBar',
-    // things that float over sharp content -- where the fringe is strongest,
-    // because a displacement chain can only ghost an edge that is there
-    '.main-contextMenu-menu', '.main-contextMenu-tippy', 'dialog',
-    '.Dropdown-menu', '.liquifySettingsPanel', '.liquifySelectMenu',
-    '.liquifySectionNavScrollBtn', '.liquifyTooltipPopup',
-    '#liquify-next-song-card', '.main-trackCreditsModal-container',
-    // controls
-    'button', '.e-10810-legacy-button', '.e-10810-form-input',
-    '.e-10810-legacy-chip__inner', '.os-scrollbar-handle',
-    '.main-globalNav-historyButtons', '.main-globalNav-navLink',
-    '.main-userWidget-box', '.search-searchCategory-carouselButton',
-    '.main-nowPlayingView-actionButton', '.liquid-lyrics-control-pill',
-
-    // NOT the panels nested inside the three above. Track rows, library items,
-    // shelves, cards, section boxes -- they are all glass surfaces and they all
-    // used to be in this list. Every one of them sits inside a panel that has
-    // already applied this same filter, so what their own copy of it refracts
-    // is glass, not the sharp content that makes the effect visible. Measured
-    // both ways, same frame, screenshots pixel-identical:
-    //
-    //     with them      118 surfaces   3.58 Mp   233 ms/frame
-    //     without them    81 surfaces   2.14 Mp   133 ms/frame
-    //
-    // Same picture for 43% less. Put them back by uncommenting -- the look does
-    // not change, the cost does.
-    //
-    // '.main-trackList-trackListRow', '.main-trackList-trackListHeader',
-    // '.main-yourLibraryX-listItem', '.main-yourLibraryX-entryPoints',
-    // '.e-10810-legacy-box--interactive', '.contentSpacing > section',
-    // '.main-entityHeader-container', '.main-actionBar-ActionBar',
-    // '.main-shelf-shelf', '.main-card-card', '.view-homeShortcutsGrid-shortcut',
-    // '.main-nowPlayingView-section', '.main-nowPlayingView-trackInfo',
-    // '.main-nowPlayingView-headerWrapper',
-  ].join(',');
-
-  // Never an image, and never anything painting a picture of its own.
-  const NOT_IMAGE =
-    ':not(img):not(picture):not(video):not(canvas):not(svg)' +
-    ':not(.cover-art):not([class*="coverArt"]):not([class*="Banner"])' +
-    ':not([class*="banner"]):not([class*="image"]):not([class*="Image"])';
-
+  // One filter for every glass surface. There is no second tier: the SMALL list
+  // that used to sit here existed only to keep the chromatic passes off
+  // controls too small to show them, and there are no chromatic passes now.
   const style = document.createElement('style');
   style.id = ID + '-style';
   document.head.appendChild(style);
   function applyGlassStyle() {
-    // The chain is 9 primitives against 2, and the original measurement of it
-    // -- 32 GPU points, 77.2% -> 44.8% -- was taken when it drew the whole
-    // window through a full-strength backdrop blur. It is affordable across
-    // every panel now for a reason that is easy to miss: a panel's backdrop
-    // here is the background CANVAS, which is already blurred by CSS before
-    // this filter ever sees it. So the backdrop blur each panel adds is 2px,
-    // not fifty, and what the filter is convolving is a small kernel over an
-    // image that is cheap to read.
-    const f = `url(#${ID}-${chromaOn() ? 'hi' : 'lo'})`;
     style.textContent =
-      `:root, html [data-liquify]{--glass-filter:${f} !important;--liquify-filter:${f} !important;}` +
-      `html :is(${PANELS})${NOT_IMAGE}{` +
-        `backdrop-filter:${f} blur(var(--liquify-glass-blur, 2px)) !important;` +
-        `-webkit-backdrop-filter:${f} blur(var(--liquify-glass-blur, 2px)) !important}` +
-      // Perf mode drops the chain and keeps a plain blur, which is the one
-      // place a second look is deliberate.
-      `html.liquify-perf :is(${PANELS})${NOT_IMAGE}{` +
-        `backdrop-filter:blur(var(--liquify-glass-blur, 2px)) !important;` +
-        `-webkit-backdrop-filter:blur(var(--liquify-glass-blur, 2px)) !important}`;
+      `:root, html [data-liquify]{--glass-filter:url(#${ID}-glass) !important;` +
+      `--liquify-filter:url(#${ID}-glass) !important;}` +
+      // A full-viewport backdrop-filter that paints nothing.
+      //
+      // The theme reserves space for the window buttons with
+      // .Root__top-container::after, and on macOS it sets that element's
+      // opacity to 0 because the OS draws them itself. The element still
+      // carries backdrop-filter:brightness(2.12) across the whole viewport, and
+      // Chromium still allocates a backdrop and filters it -- 1.36 megapixels
+      // of work multiplied by zero, re-run every time the background repaints
+      // beneath it. That is more filtered area than every real glass surface in
+      // the app put together, which is 0.10.
+      //
+      // Removing it changed the window by a mean of 0.056/255, maximum 2.
+      // Scoped to macOS, which is exactly where the theme zeroes the opacity.
+      `html.spotify__os--is-macos .Root__top-container::after{` +
+      `backdrop-filter:none!important;-webkit-backdrop-filter:none!important}`;
   }
   applyGlassStyle();
 
@@ -214,12 +133,11 @@
   // ---- the theme's own background layers ----
   //
   // Gone. `.liquify-bg-layer` used to be the album art behind everything, and
-  // this file spent a block shrinking its backing store to a sixteenth so its
-  // live blur cost less. Nothing draws it now: liquify-fabric-bg.js paints the
-  // background in a shader and, as of the same change, REMOVES the theme's two
-  // cover layers, its four spinning tiles and its Kawarp div from the document
-  // outright -- they had been sitting under an opaque canvas being rendered for
-  // nobody. There is nothing left here to style.
+  // this file spent a block shrinking its backing store so its live blur cost
+  // less. Nothing draws it now: liquify-fabric-bg.js paints the background in a
+  // shader and removes the theme's two cover layers, its four spinning tiles
+  // and its Kawarp div from the document outright. There is nothing left to
+  // style.
 
   // ---- shadows ----
   //
@@ -547,35 +465,6 @@
       input.addEventListener('input', () => { sync(); setFont(which, input.value); });
       sync();
     }
-    const chroma = document.createElement('div');
-    chroma.style.cssText = 'margin-top:14px';
-    chroma.innerHTML = `
-      <div style="font:600 13px/1.4 inherit;opacity:.9;margin-bottom:4px">Chromatic aberration
-        <div style="font:400 11px/1.4 inherit;opacity:.55;margin-top:3px">
-          Each glass panel samples what is behind it three times, once per
-          colour channel, at slightly different offsets -- so anything sharp
-          behind the glass separates into red, green and blue. Strongest on
-          menus, tooltips and the play bar, which sit over text; a panel with
-          only the blurred background behind it has no edge to split.
-          <br><br>
-          Off keeps the same refraction with one pass instead of three. Measured
-          on this layout, same frame: 233 ms with, 100 ms without. Alt+Shift+P
-          drops the chain entirely.
-        </div>
-      </div>
-      <label style="display:flex;align-items:center;gap:10px;margin:8px 0;font:400 12px/1 inherit;opacity:.85">
-        <input type="checkbox" data-lqx-chroma ${chromaOn() ? 'checked' : ''}>
-        <span>Enable (costs GPU)</span>
-      </label>`;
-    wrap.appendChild(chroma);
-    chroma.querySelector('[data-lqx-chroma]').addEventListener('change', (e) => {
-      localStorage.setItem(CHROMA_KEY, e.target.checked ? 'on' : 'off');
-      applyGlassStyle();
-      // The shader re-reads the key every frame, but the frame loop is stopped
-      // while the window is occluded, so nudge it rather than leaving the panels
-      // showing the old setting until something else happens to draw.
-      window.liquifyFabric?.drawOnce?.();
-    });
     // FIRST child, not appended. Appending put this block below every one of the
     // theme's own sections and below "Reset all Settings", so in practice it was
     // never found -- the Background section near the top of the panel was where
