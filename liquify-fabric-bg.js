@@ -216,37 +216,64 @@
 
   // Name That Tune blanks the cover art, the track name and the play bar for
   // the song you are meant to guess -- and then this background painted that
-  // very album across the whole screen, which answers the question before the
-  // first snippet finishes. So while a round is up the artwork is HELD:
-  // whatever was showing when the round started stays up, and the round's own
-  // cover arrives only when the answer does.
+  // very album across the whole screen, answering the question before the first
+  // snippet finished. So while a round is up the artwork is HELD: whatever was
+  // showing when the round started stays up, and the round's own cover arrives
+  // only when the answer does.
   //
-  // Read from the route and from the game's own reveal panel, NOT from the
-  // `name-that-tune--guessing` body class the game maintains. An earlier
-  // version of this used that class and did nothing in the case that matters:
-  // the app sets its classes only from a History.listen callback, so they are
-  // applied when you navigate INTO the game and never when Spotify restores
-  // that route at launch -- which it does every time the game was the last
-  // thing open. liquify-ui-tweaks repairs that omission, but this must keep
-  // working whether or not the repair does.
+  // Three signals, because no one of them covers every way a round can be
+  // entered or left, and the first two attempts each shipped with a hole:
   //
-  // "No reveal panel" is the test because it is also correct in the moment
-  // before the app has rendered anything, which is exactly the boot case: the
-  // startup refreshArt would otherwise load the mystery cover while the game
-  // was still mounting.
+  //  1. The game's own --guessing class. Synchronous and exact where it exists:
+  //     nextSong() sets it BEFORE calling Player.next(), which is the only
+  //     thing that closes the race against that track's songchange. But the app
+  //     sets its classes from a History.listen callback and nowhere else, so
+  //     they are missing entirely when Spotify restores the game's route at
+  //     launch. (liquify-ui-tweaks repairs that; this does not rely on it.)
+  //
+  //  2. The track being guessed, remembered by URI across navigation and
+  //     restarts. Without this, walking out of the game mid-round released the
+  //     hold, loaded the mystery cover, and -- worse -- SAVED it as the cover
+  //     to fall back on, so the next launch came up showing the answer. That is
+  //     the bug this signal exists for: the mystery track must stay concealed
+  //     while it is still the mystery track, wherever you happen to be looking.
+  //
+  //  3. Being on the game's route with no reveal panel rendered. Covers the
+  //     ~800ms at startup when the route is restored but nothing has rendered
+  //     and no class has been set, which is exactly when refreshArt would
+  //     otherwise load the mystery cover.
+  const ROUND_KEY = 'liquify-fabric-ntt-round';
+  const NTT_ROUTE = /^\/name-that-tune/;
+
+  const onGameRoute = () => NTT_ROUTE.test(Spicetify.Platform?.History?.location?.pathname || '');
+  const revealed = () => !!document.querySelector('.name-that-tune-module__reveal');
+  const nowUri = () => Spicetify.Player.data?.item?.uri || '';
+
+  // Mirrored in memory so the 300ms release poll below is not a localStorage
+  // read (and a write) three times a second. localStorage is the durable copy,
+  // read once at startup, which is the only time this process cannot already
+  // know the answer.
+  let roundUri = localStorage.getItem(ROUND_KEY) || '';
+  const setRound = (uri) => {
+    if (uri === roundUri) return;
+    roundUri = uri;
+    try { uri ? localStorage.setItem(ROUND_KEY, uri) : localStorage.removeItem(ROUND_KEY); } catch {}
+  };
+
   const holding = () =>
-    /^\/name-that-tune/.test(Spicetify.Platform?.History?.location?.pathname || '') &&
-    !document.querySelector('.name-that-tune-module__reveal');
+    document.body.classList.contains('name-that-tune--guessing') ||
+    (!!roundUri && roundUri === nowUri()) ||
+    (onGameRoute() && !revealed());
 
   // What is on the shader, remembered across restarts. Only needed for one
-  // case, but that case is the common one: boot straight into a held round and
-  // there IS no previous song this session, so with nothing to fall back on the
-  // background would come up empty. This is the cover from before Spotify was
+  // case, but it is the common one: boot straight into a held round and there
+  // IS no previous song this session, so with nothing to fall back on the
+  // background comes up empty. This is the cover from before Spotify was
   // closed -- genuinely the last thing that played.
   const ART_KEY = 'liquify-fabric-last-art';
 
-  // `force` loads a specific cover regardless of the hold; it is how the stored
-  // one gets in. Everything else passes nothing and follows the player.
+  // `force` loads a specific cover regardless of the hold; it is how the
+  // remembered one gets in. Everything else passes nothing and follows player.
   async function refreshArt(force) {
     const url = force || artUrl();
     if (!url || url === lastUrl) return;
@@ -275,7 +302,10 @@
     }
     fadeTo = toB ? 1 : 0;
     toB = !toB;
-    try { localStorage.setItem(ART_KEY, url); } catch {}
+    // Only what is legitimately the current cover is worth remembering. A
+    // held load (the stored cover being put back at startup) must not rewrite
+    // the store, and a load that raced a hold must not either.
+    try { if (!holding()) localStorage.setItem(ART_KEY, url); } catch {}
   }
   let fadeTo = 0;
 
@@ -294,7 +324,26 @@
   // reaches syncHold on the boot-into-the-game path, and holdPoll would still
   // be in its temporal dead zone.
   let holdPoll = null;
+
+  // The only place the remembered round is written. holding() stays a pure
+  // read, because refreshArt calls it too and a predicate that also records
+  // state is a predicate that lies depending on who asked.
+  function trackRound() {
+    const uri = nowUri();
+    if (onGameRoute()) {
+      // The answer is on screen, so there is nothing left to conceal.
+      if (revealed()) setRound('');
+      else if (uri) setRound(uri);
+      return;
+    }
+    // Off the game and playing something else: whatever round was open has
+    // been left behind. Playing the SAME track still counts as the round --
+    // that is the case that used to leak the answer.
+    if (uri && roundUri && roundUri !== uri) setRound('');
+  }
+
   function syncHold() {
+    trackRound();
     if (holding()) {
       if (!holdPoll) holdPoll = setInterval(syncHold, 300);
       // Booting into a round: the hold is correct, but it has nothing to hold
@@ -309,7 +358,10 @@
 
   // Wrapped: the listener is handed an event, and refreshArt now reads its
   // first argument as a cover to force.
-  Spicetify.Player.addEventListener('songchange', () => refreshArt());
+  // Through syncHold rather than straight to refreshArt: a song change is also
+  // how a round begins and how one is abandoned, so the remembered round has to
+  // be brought up to date before anything decides whether to load a cover.
+  Spicetify.Player.addEventListener('songchange', syncHold);
   syncHold();                                  // also the initial refreshArt
   try { Spicetify.Platform.History.listen(syncHold); } catch {}
 

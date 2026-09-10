@@ -7,6 +7,36 @@
 // Everything else in this setup is a plain CSS snippet; only put things here
 // that genuinely need script.
 
+// ---- Spicetify.Locale, before Spotify gets round to defining it ----
+//
+// Name That Tune initialises i18n with `Spicetify.Locale.getLocale()` at module
+// scope. Navigate to the game and that is fine. Let Spotify RESTORE the game's
+// route at launch and its route chunk runs early enough that Spicetify.Locale
+// is still undefined, so the app throws at import and the whole page renders as
+// "Something went wrong. Try reloading the page." -- which is also why the
+// background looked stuck: with the app dead, the reveal panel it is watched
+// for never appears.
+//
+// Extensions are evaluated well before route chunks, so a stand-in here is
+// always in place first. Defined as an accessor rather than assigned, so that
+// the moment Spotify installs the real Locale it takes over completely and
+// nothing is left holding a stub.
+(function shimLocaleUntilReady() {
+  const S = window.Spicetify;
+  if (!S || S.Locale) return;
+  let real = null;
+  const stub = {
+    getLocale: () => S.Platform?.Session?.locale || (navigator.language || 'en').split('-')[0],
+  };
+  try {
+    Object.defineProperty(S, 'Locale', {
+      configurable: true,
+      get: () => real || stub,
+      set: (v) => { real = v; },
+    });
+  } catch {}
+})();
+
 // Liquid Lyrics' settings entry point is not only the button in its card
 // header -- it also registers a Spicetify.Menu item in the profile dropdown,
 // named "Liquid Lyrics Settings", whose callback opens its own panel directly.
