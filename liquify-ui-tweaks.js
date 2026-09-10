@@ -498,6 +498,15 @@
       const text = label.textContent.trim();
       if (!DEAD_ROWS.some((d) => text.startsWith(d))) continue;
       const row = label.closest('.liquifyRow');
+      // `hidden` for intent, and a stylesheet to actually do it. The `hidden`
+      // attribute hides nothing here: the UA rule behind it is [hidden]{display:
+      // none} at UA precedence, and the theme's own `.liquifyRow{display:flex}`
+      // is an author rule, so it wins every time. These eight rows were set
+      // hidden two revisions ago and stayed on screen at their full 50px, which
+      // is why the theme still appeared to have two sets of background
+      // controls. Nothing caught it because the check read `row.hidden` -- the
+      // property that had just been assigned -- instead of the computed
+      // display. See the rule in lqx-settings-merge-style.
       if (row && !row.hidden) { row.hidden = true; hid++; }
     }
     if (!hid) return;
@@ -533,6 +542,10 @@
   const settingsStyle = document.createElement('style');
   settingsStyle.id = 'lqx-settings-merge-style';
   settingsStyle.textContent = `
+    /* What makes pruneSettings' \`hidden\` mean anything. The theme sets
+       display on .liquifyRow and .liquifySubSection, which outranks the UA
+       [hidden] rule, so this has to restate it as an author rule. */
+    .liquifyRow[hidden], .liquifySubSection[hidden], .liquifySection[hidden]{display:none!important}
     .lqx-settings-tabs{display:flex;gap:6px;padding:4px 4px 10px;justify-content:center}
     .lqx-settings-tab{appearance:none;border:0;cursor:pointer;padding:5px 16px;border-radius:999px;
       font:600 12px -apple-system,system-ui,sans-serif;color:rgba(255,255,255,.7);

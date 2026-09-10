@@ -672,6 +672,8 @@
   uniform sampler2D uA, uB;
   uniform float uMix, uT, uAmp, uZoom, uLod, uRefract, uTint, uEdge, uSpread;
   uniform vec2 uCover, uMean, uRes;
+  uniform vec4 uVp;      // xy = viewport/overscan scale, zw = offset
+  uniform float uSheen;  // width of the rim highlight, canvas px
   uniform vec4 uGrip[${GRIPS}];
   uniform vec2 uGW[${GRIPS}];
   uniform vec4 uRect[${MAXP}];    // xy = top-left, zw = size, in canvas pixels
@@ -772,8 +774,29 @@
     float rim = 1. - (1. - rx) * (1. - ry);
     vec2 n = normalize(vec2(sign(rel.x) * rx, sign(rel.y) * ry) + 1e-5);
 
-    vec2 bend = n * rim * uRefract * vec2(1., -1.) / uRes;
-    vec2 uv0 = vUv + bend;
+    // Into the BACKGROUND's coordinate space before sampling anything.
+    //
+    // This pass and the background pass evaluate the same warp on the same
+    // cover, and until this existed they disagreed about where they were. The
+    // background canvas runs past the viewport by OVER pixels a side so its CSS
+    // blur fades off-screen; this one is exactly viewport-sized, because its
+    // panel rectangles come from layout. Both then computed
+    // t = (vUv-.5)*uCover+.5 from their own vUv, so the background fitted the
+    // cover across 1736 screen pixels and the glass fitted it across 1470 -- an
+    // 18% scale difference, plus an offset.
+    //
+    // It showed exactly as you would expect once you know what to look for.
+    // Scanning luminance across a panel border: the glass was 16/255 BRIGHTER
+    // than the wall it is set into at the left edge, and 15/255 DARKER at the
+    // right edge. Opposite signs on opposite sides is a shift, not a tint --
+    // the panel was showing a slightly different part of the picture.
+    //
+    // uVp maps this canvas's 0..1 onto the background's 0..1. The bend is a
+    // fraction of the viewport, so it scales the same way. The panel geometry
+    // above stays in vUv, which is the space its rectangles are measured in.
+    vec2 sUv = vUv * uVp.xy + uVp.zw;
+    vec2 bend = n * rim * uRefract * vec2(1., -1.) / uRes * uVp.xy;
+    vec2 uv0 = sUv + bend;
 
     vec2 uv = uv0 + (pull(uv0) - uMean);
     vec2 t = (uv-.5)*uCover*uZoom + .5;
@@ -798,12 +821,27 @@
     // Brighter than the background it is set into (that layer is dimmed to
     // .45), which is what reads as "this panel is lit from within".
     col *= uTint;
-    // A cool sheen along the rim, strongest where the refraction is.
+    // A cool highlight along the rim, on its OWN width -- not the bend's.
     //
-    // Not split into its ends any more. Chromatic aberration is one algorithm
-    // now, in liquify-perf.js, and it is the SVG displacement chain that has
-    // always drawn the play bar -- see the note above the glass pass.
-    col += rim * rim * 0.06;
+    // This used to ride rim, which eases over uEdge. That was fine while
+    // uEdge was 26 canvas pixels and wrong the moment it became 52, because
+    // uEdge is the distance the glass takes to finish bending and it wants to be
+    // generous: a slab that changes shape inside a finger's width reads as a
+    // crease. A highlight wants the opposite. At 52 the sheen became a band 104
+    // screen pixels wide adding 0.06 -- fifteen of 255 -- to every panel, and
+    // since it rings all four sides of panels only 200 to 650 pixels across,
+    // most of a sidebar sat inside it. Scanned across a panel border: 88/255 in
+    // the exposed background, 103 four pixels inside the panel, decaying back to
+    // 89 eighty pixels in. That step is the whole of "the panels look different
+    // from the background" -- the panel interior was already an exact match, and
+    // this was painted on top of it.
+    //
+    // Twelve screen pixels now, built like rim itself out of two per-axis ramps
+    // joined as a smooth union so it stays continuous through the corners.
+    float sx = 1. - smoothstep(0., uSheen, toEdge.x);
+    float sy = 1. - smoothstep(0., uSheen, toEdge.y);
+    float lip = 1. - (1. - sx) * (1. - sy);
+    col += lip * lip * 0.06;
     outColor = vec4(col * inside, inside);   // premultiplied
   }`;
 
@@ -845,7 +883,8 @@
                cover: U('uCover'), zoom: U('uZoom'), mean: U('uMean'), res: U('uRes'),
                grip: U('uGrip'), gw: U('uGW'), rect: U('uRect'), rad: U('uRad'),
                count: U('uCount'), lod: U('uLod'), refract: U('uRefract'),
-               tint: U('uTint'), edge: U('uEdge'), spread: U('uSpread') };
+               tint: U('uTint'), edge: U('uEdge'), spread: U('uSpread'),
+               vp: U('uVp'), sheen: U('uSheen') };
       g2.uniform1i(gUni.A, 0);
       g2.uniform1i(gUni.B, 1);
       g2.enable(g2.BLEND);
@@ -942,7 +981,15 @@
     if (!glassReady || !panelCount) return;
     glassFrames++;
     glassResize();
-    const A = gCanvas.width / gCanvas.height;
+    // The BACKGROUND canvas's aspect, not this one's. The cover fit has to be
+    // the background's, or the two show the picture at different scales -- the
+    // same disagreement uVp fixes for position.
+    const A = canvas.width / canvas.height;
+    // This canvas covers the viewport; the background covers the viewport plus
+    // OVER pixels a side.
+    const o = OVER(cfg().blur);
+    const tw = window.innerWidth + o * 2, th = window.innerHeight + o * 2;
+    g2.uniform4f(gUni.vp, window.innerWidth / tw, window.innerHeight / th, o / tw, o / th);
     g2.useProgram(gProg);
     g2.activeTexture(g2.TEXTURE0); g2.bindTexture(g2.TEXTURE_2D, gTexA);
     g2.activeTexture(g2.TEXTURE1); g2.bindTexture(g2.TEXTURE_2D, gTexB);
@@ -997,6 +1044,8 @@
     const warp = Math.max(0, Math.min(1, strength / 100));
     g2.uniform1f(gUni.refract, 20 * warp);
     g2.uniform1f(gUni.edge, 52);
+    // The highlight's own width, deliberately unrelated to uEdge above.
+    g2.uniform1f(gUni.sheen, 6);
     // The SAME dimming as the background, not a step above it.
     //
     // "Lit from within" was a nice idea and the wrong one here: the panels
