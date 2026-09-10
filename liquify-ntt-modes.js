@@ -486,13 +486,15 @@
     #lqx-ntt-root{position:fixed;z-index:200;display:none;pointer-events:none}
     body.name-that-tune #lqx-ntt-root{display:block}
 
+    /* A bare plus in the corner. No label and no chrome: the page it sits on
+       is one guess box and three controls, and the only thing this needs to be
+       is findable without competing with them. Sized and coloured like the
+       game's own tertiary controls so it reads as part of the page. */
     #lqx-ntt-new{position:absolute;top:0;right:0;pointer-events:auto;display:none;
-      align-items:center;gap:6px;appearance:none;border:0;cursor:pointer;border-radius:999px;
-      padding:8px 15px;font:inherit;font-size:12px;font-weight:700;color:var(--spice-text);
-      background:color-mix(in srgb,var(--spice-main) 62%,transparent);
-      box-shadow:inset 0 0 0 1px rgba(255,255,255,.12),0 10px 26px rgba(0,0,0,.34);
-      backdrop-filter:blur(22px)}
-    #lqx-ntt-new:hover{background:color-mix(in srgb,var(--spice-main) 80%,transparent)}
+      align-items:center;justify-content:center;width:30px;height:30px;
+      appearance:none;border:0;cursor:pointer;background:transparent;border-radius:50%;
+      padding:0;color:var(--spice-subtext)}
+    #lqx-ntt-new:hover{color:var(--spice-text);background:rgba(255,255,255,.08)}
     #lqx-ntt-root[data-panel="0"] #lqx-ntt-new{display:inline-flex}
 
     /* A scrim, so the page behind reads as inactive and a stray click lands
@@ -549,6 +551,24 @@
     #lqx-ntt-sugg img{flex:0 0 auto;width:26px;height:26px;border-radius:50%;object-fit:cover}
     #lqx-ntt-sugg button:hover,#lqx-ntt-sugg button[data-on="1"]{background:rgba(255,255,255,.14)}
 
+    /* One message, mine, and nothing else while the game is open.
+       Starting a game produced a stack of three: Spotify's "can't play this
+       right now", the game's own "Shuffled 60 Songs", and this file's summary.
+       Rather than filter the other two by their text -- which is translated,
+       and one of them is Spotify's own -- every snackbar is suppressed on this
+       route and the one message worth showing is rendered here instead. It is
+       therefore NOT a snackbar, which is exactly why it survives the rule. */
+    #lqx-ntt-toast{position:fixed;left:50%;bottom:34px;transform:translate(-50%,10px);
+      pointer-events:none;opacity:0;transition:opacity .18s ease,transform .18s ease;
+      max-width:min(520px,80vw);padding:12px 20px;border-radius:8px;
+      font:inherit;font-size:13px;font-weight:600;text-align:center;
+      color:var(--spice-main);background:var(--spice-text);
+      box-shadow:0 8px 26px rgba(0,0,0,.4)}
+    #lqx-ntt-toast[data-show="1"]{opacity:1;transform:translate(-50%,0)}
+    #lqx-ntt-toast[data-error="1"]{color:#fff;background:#c0392b}
+
+    body.name-that-tune .notistack-Snackbar{display:none!important}
+
     #lqx-ntt-go{appearance:none;border:0;cursor:pointer;border-radius:999px;padding:11px 18px;
       font:inherit;font-size:13px;font-weight:700;color:var(--spice-main);background:var(--spice-button)}
     #lqx-ntt-go:disabled{opacity:.55;cursor:progress}
@@ -577,7 +597,8 @@
   root.id = 'lqx-ntt-root';
   root.innerHTML = `
     <div id="lqx-ntt-scrim"></div>
-    <button id="lqx-ntt-new" type="button">+ New game</button>
+    <div id="lqx-ntt-toast" role="status"></div>
+    <button id="lqx-ntt-new" type="button" aria-label="New game" title="New game"><svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="11" y="4" width="2" height="16" rx="1"></rect><rect x="4" y="11" width="16" height="2" rx="1"></rect></svg></button>
     <div id="lqx-ntt-panel" role="dialog" aria-label="New game">
       <div id="lqx-ntt-head">
         <h2>New game</h2>
@@ -610,6 +631,18 @@
   const $arg = root.querySelector('#lqx-ntt-arg');
   const $sugg = root.querySelector('#lqx-ntt-sugg');
   const $go = root.querySelector('#lqx-ntt-go');
+  const $toast = root.querySelector('#lqx-ntt-toast');
+
+  // Deliberately not Spicetify.showNotification: that renders a snackbar, and
+  // snackbars are hidden on this route. Same dismissal feel, one at a time.
+  let toastTimer = null;
+  function toast(message, isError) {
+    $toast.textContent = message;
+    $toast.dataset.error = isError ? '1' : '0';
+    $toast.dataset.show = '1';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { $toast.dataset.show = '0'; }, isError ? 4200 : 3200);
+  }
 
   const paintSegment = (el, value) => {
     for (const b of el.children) b.setAttribute('aria-pressed', String(b.dataset.value === value));
@@ -795,7 +828,7 @@
   async function startGame() {
     const c = cfg();
     if ((c.source === 'artist' || c.source === 'genre') && !c.arg.trim()) {
-      Spicetify.showNotification(`Enter ${c.source === 'artist' ? 'an artist' : 'a genre'} first`, true);
+      toast(`Enter ${c.source === 'artist' ? 'an artist' : 'a genre'} first`, true);
       $arg.focus();
       return;
     }
@@ -806,8 +839,7 @@
         // Harder means a LOWER playcount floor, so an empty easy round is fixed
         // by going harder, not easier. Worth stating: the instinct on an empty
         // result is to reach the other way.
-        Spicetify.showNotification(
-          `Nothing that popular in ${LABELS[c.source].toLowerCase()} - try a harder difficulty`, true);
+        toast(`Nothing that popular in ${LABELS[c.source].toLowerCase()} - try a harder difficulty`, true);
         return;
       }
       const uris = shuffle(uniq(tracks.map((t) => t.uri))).slice(0, TARGET);
@@ -822,9 +854,9 @@
         search: `?t=${Date.now()}`,
         state: { URIs: uris },
       });
-      Spicetify.showNotification(`${uris.length} songs - ${LABELS[c.source]}, ${c.difficulty}`);
+      toast(`${uris.length} songs - ${LABELS[c.source]}, ${c.difficulty}`);
     } catch (e) {
-      Spicetify.showNotification(String(e?.message || e), true);
+      toast(String(e?.message || e), true);
     } finally {
       setBusy(false);
     }

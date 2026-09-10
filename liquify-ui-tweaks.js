@@ -369,16 +369,45 @@
     if (clean && clean !== h.textContent) h.textContent = clean;
   }
 
-  // The one case add-only cannot reach: booting onto the route with the game
-  // already showing an answer. Nothing has rendered yet at that point, so the
-  // absent reveal panel above reads as "a round is up" and hides the play bar
-  // for a reveal that is not hidden anyway. Assuming a round IS the right
-  // default -- guessing wrong the other way puts the answer on screen -- so it
-  // is corrected once, when the app is actually up, and then left to the game.
+  // Two jobs, both about the same thing: Name That Tune's route chunk runs too
+  // early when Spotify RESTORES that route at launch, and it assumes Spicetify
+  // is already finished booting.
+  //
+  //  1. The case add-only cannot reach: booting onto the route with the game
+  //     already showing an answer. Nothing has rendered at that point, so the
+  //     absent reveal panel reads as "a round is up" and hides the play bar for
+  //     a reveal that is not hidden anyway. Assuming a round IS the right
+  //     default -- guessing wrong the other way puts the answer on screen -- so
+  //     it is corrected once, when the app is actually up.
+  //
+  //  2. If the app never comes up at all, bounce the route so it mounts again.
+  //     The Locale stand-in above fixes one of these races; it is not the only
+  //     one. `class Gn { state = { location: Spicetify.Platform.History.location } }`
+  //     throws the same way when the route mounts before Platform.History
+  //     exists, which measured at ~1000ms into boot. Rather than stand in for
+  //     the router as well -- a stub location that never corrects itself would
+  //     be worse than the crash -- this waits for the app to render and, if it
+  //     does not, navigates away and back so React builds the component again
+  //     against a Spicetify that has finished starting.
+  //
+  //     Detected by the app's own container failing to appear, not by the error
+  //     boundary's text, which is translated. Bounded to two attempts: if
+  //     something is broken for good, an extension that navigates in a loop is
+  //     a far worse problem than a page that says so.
+  let nttBounces = 0;
   (function settleNameThatTune(tries) {
     if (!onNttRoute()) return;
     if (!document.querySelector('.name-that-tune-module__container')) {
-      if (tries > 0) setTimeout(() => settleNameThatTune(tries - 1), 150);
+      if (tries > 0) return setTimeout(() => settleNameThatTune(tries - 1), 150);
+      if (nttBounces++ >= 2) return;
+      const H = Spicetify.Platform?.History;
+      if (!H) return;
+      console.warn('[liquify-ui-tweaks] name-that-tune did not render; remounting it');
+      H.replace('/');
+      setTimeout(() => {
+        H.push({ pathname: '/name-that-tune', search: `?t=${Date.now()}` });
+        setTimeout(() => settleNameThatTune(60), 400);
+      }, 350);
       return;
     }
     if (nttRevealed()) document.body.classList.remove('name-that-tune--guessing');
