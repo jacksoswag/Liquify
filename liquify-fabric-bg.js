@@ -558,6 +558,10 @@
   // resolution. Still a quarter of the pixels of a full-res pass.
   const GLASS_RES = 2;
   const MAXP = 6;
+  // Taps in the blur disc. Eight is where the banding on a smooth gradient
+  // stops being visible at this canvas resolution; more is spending texture
+  // reads on a difference nothing can see.
+  const TAPS = 8;
   const PANELS = ['.Root__nav-bar', '.Root__main-view', '.Root__right-sidebar'];
 
   const gCanvas = document.createElement('canvas');
@@ -580,7 +584,7 @@
   in vec2 vUv;
   out vec4 outColor;
   uniform sampler2D uA, uB;
-  uniform float uMix, uT, uAmp, uZoom, uLod, uRefract, uTint, uEdge;
+  uniform float uMix, uT, uAmp, uZoom, uLod, uRefract, uTint, uEdge, uSpread;
   uniform vec2 uCover, uMean, uRes;
   uniform vec4 uGrip[${GRIPS}];
   uniform vec2 uGW[${GRIPS}];
@@ -649,9 +653,27 @@
 
     vec2 uv = uv0 + (pull(uv0) - uMean);
     vec2 t = (uv-.5)*uCover*uZoom + .5;
-    // Mip level instead of a tap loop: the blur is one filtered read rather
-    // than nine, and the hardware is already building the chain.
-    vec3 col = mix(textureLod(uA,t,uLod), textureLod(uB,t,uLod), uMix).rgb;
+
+    // Blur as a mip level PLUS a tap disc, rather than mip level alone.
+    //
+    // One read at a high mip is the cheap way and it falls apart exactly where
+    // it is asked to work hardest: mip 5 of a 640px cover is a 20px image, and
+    // stretching 20 pixels across a 656px panel is not a blur, it is a
+    // low-resolution image. That is the "why does it look low quality when I
+    // blur it" -- the more blur asked for, the smaller the image it was
+    // magnifying.
+    //
+    // So the mip is held to a level that still has detail and the rest of the
+    // radius comes from spreading the taps. Points on a golden-angle spiral,
+    // which fills a disc evenly at any count without a pattern to alias with.
+    vec3 acc = vec3(0.);
+    for (int i=0;i<${TAPS};i++){
+      float a = float(i) * 2.39996323;
+      float rr = sqrt((float(i)+.5)/float(${TAPS}));
+      vec2 off = vec2(cos(a), sin(a)) * rr * uSpread;
+      acc += mix(textureLod(uA,t+off,uLod), textureLod(uB,t+off,uLod), uMix).rgb;
+    }
+    vec3 col = acc / float(${TAPS});
 
     // Brighter than the background it is set into (that layer is dimmed to
     // .45), which is what reads as "this panel is lit from within".
@@ -699,7 +721,7 @@
                cover: U('uCover'), zoom: U('uZoom'), mean: U('uMean'), res: U('uRes'),
                grip: U('uGrip'), gw: U('uGW'), rect: U('uRect'), rad: U('uRad'),
                count: U('uCount'), lod: U('uLod'), refract: U('uRefract'),
-               tint: U('uTint'), edge: U('uEdge') };
+               tint: U('uTint'), edge: U('uEdge'), spread: U('uSpread') };
       g2.uniform1i(gUni.A, 0);
       g2.uniform1i(gUni.B, 1);
       g2.enable(g2.BLEND);
@@ -820,18 +842,27 @@
     // reach the few slivers of background between panels. Anything the sliders
     // control has to be plumbed through to here or it stops being a setting.
     //
-    // Blur maps to a mip level: the cover is 640px drawn across roughly 1470,
-    // so a screen-pixel radius is about 0.44 texture pixels, and a mip level is
-    // a doubling. log2 of the radius lands within a hair of the 3.6 that was
-    // tuned by eye at the default blur of 12, which is the arithmetic agreeing
-    // with the eye rather than a coincidence worth relying on.
-    g2.uniform1f(gUni.lod, Math.max(0, Math.min(8, Math.log2(Math.max(1, blur)))));
+    // Blur is split between the two. The cover is 640px drawn across roughly
+    // 1470, so one screen pixel is about 0.44 texture pixels. The mip carries
+    // the part it can carry without the image getting small -- capped at 3,
+    // which is still an 80px texture -- and the tap disc carries the remainder
+    // as a real spread in texture coordinates.
+    const rTex = Math.max(1, blur) * 0.44;
+    g2.uniform1f(gUni.lod, Math.max(0, Math.min(3, Math.log2(rTex))));
+    g2.uniform1f(gUni.spread, rTex / 640);
     // The rim bend is part of the warp, so it answers to the same slider.
     const warp = Math.max(0, Math.min(1, strength / 100));
     g2.uniform1f(gUni.refract, 26 * warp);
     g2.uniform1f(gUni.edge, 26);
-    // Lit from within: a fixed step above whatever the background is dimmed to.
-    g2.uniform1f(gUni.tint, DIM * 1.38);
+    // The SAME dimming as the background, not a step above it.
+    //
+    // "Lit from within" was a nice idea and the wrong one here: the panels
+    // cover about 95% of the window, so a glass that is 38% brighter does not
+    // read as lit, it reads as the exposed background being mysteriously dark.
+    // The bright thing wins by area and the slivers between panels look like
+    // the mistake. Glass is blur and refraction; it does not have to be brighter
+    // than what it is set into.
+    g2.uniform1f(gUni.tint, DIM);
     g2.clearColor(0, 0, 0, 0);
     g2.clear(g2.COLOR_BUFFER_BIT);
     g2.drawArrays(g2.TRIANGLES, 0, 3);

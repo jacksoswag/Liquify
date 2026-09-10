@@ -533,7 +533,35 @@
     // (invisible) Kawarp canvas instead. These are now the first thing in the
     // panel body, and liquify-fabric-bg stands the theme's animated background
     // down so there is no second, dead set of background controls below.
-    panel.insertBefore(wrap, panel.firstChild);
+    // Into the theme's own Background section rather than on top of the panel.
+    //
+    // Sitting at the top made this a SECOND block headed "Background", above a
+    // section of the same name whose own controls this replaced -- two headings
+    // and one working set of controls. Nesting it puts the controls under the
+    // heading that names them, and keeps the Background button in the tab strip
+    // pointing at something, which it would not be if that section were left
+    // with nothing in it.
+    const bgBody = [...panel.querySelectorAll('.liquifySection')]
+      .find((sec) => sec.querySelector('.liquifySectionTitle')?.textContent.trim() === 'Background')
+      ?.querySelector('.liquifySectionBody');
+    if (bgBody) {
+      // The section title already says Background, so this block's own heading
+      // goes and its explanation stays. The heading element holds the WORD as a
+      // text node and the explanation as its only child element, so replacing
+      // the heading with that child drops exactly the duplicate -- taking the
+      // first child element instead removes the explanation and keeps the
+      // duplicate, which is the wrong way round and looks it.
+      const head = wrap.firstElementChild;
+      const desc = head?.firstElementChild;
+      if (head && desc) {
+        desc.style.marginBottom = '10px';
+        head.replaceWith(desc);
+      }
+      wrap.style.borderBottom = 'none';
+      bgBody.insertBefore(wrap, bgBody.firstChild);
+    } else {
+      panel.insertBefore(wrap, panel.firstChild);
+    }
     for (const input of wrap.querySelectorAll('input[data-lqx]')) {
       input.addEventListener('input', () => {
         const which = input.getAttribute('data-lqx');

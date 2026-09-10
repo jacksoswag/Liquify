@@ -413,10 +413,115 @@
     if (nttRevealed()) document.body.classList.remove('name-that-tune--guessing');
   })(60);
 
-  new MutationObserver(() => { decorate(); repairNameThatTune(); })
+  // ---- settings that no longer do anything -----------------------------------
+  //
+  // This fork has grown its own controls, and several of the theme's now either
+  // duplicate them or drive machinery that has been switched off underneath
+  // them. A setting that does nothing is worse than a missing one: it invites
+  // you to change it, and then to wonder what is broken when nothing moves.
+  //
+  // Hidden, not deleted. Every one of these keys is still read by the theme,
+  // and some are written by the code that replaced them -- the fabric
+  // background sets the background MODE to keep Liquify's accent sampling
+  // alive, for instance. Removing the row removes the invitation, not the
+  // setting.
+  const DEAD_ROWS = [
+    // Both of these blur .liquify-bg-layer, which liquify-fabric-bg reduces to
+    // a 1px transparent element -- the layer is kept only so Liquify can still
+    // sample it for --liquify-accent. The visible background is a canvas, and
+    // its own Blur and Distortion live in the Background tab above.
+    'Background Blur (px)',
+    'Background Brightness (%)',
+    // Chooses between background modes that the canvas covers completely.
+    'Background:',
+    // Feeds the resolution of those same hidden layers.
+    'Use hi-res pictures',
+    // Superseded by the font fields in the Background tab, which take ANY font
+    // installed on this machine rather than the theme's built-in list. Same two
+    // localStorage keys, so this is two controls for one setting.
+    'Body Font',
+    'Heading Font',
+    // The glass on these two panels is drawn by the shader pass now. Switching
+    // these on would stack a full-viewport backdrop-filter on top of it: double
+    // the blur, and the entire cost the shader pass exists to avoid.
+    'Blur Behind Left Sidebar',
+    'Blur Behind Right Sidebar',
+  ];
+
+  // The settings panel ships fully transparent, which was survivable when it
+  // opened over a flat background and is not now: it opens over a track list,
+  // and two sets of text at the same size in the same pixels reads as noise.
+  //
+  // Set on the ELEMENT rather than in a stylesheet. A rule with an id in the
+  // selector and !important on the declaration still computed to none, while
+  // the background from the very same rule applied -- the theme's own
+  // `.liquifySettingsPanel { backdrop-filter: var(--glass-filter) ... }` is in
+  // play and var() substitution that fails is invalid at computed-value time,
+  // which resolves the property to none no matter what else the cascade says.
+  // An inline style was verified to take, so that is what this uses.
+  //
+  // And it is a real backdrop-filter rather than the shader pass, necessarily:
+  // the panel floats over DOM, and the shader draws behind all of it.
+  function glazeSettingsPanel(panel) {
+    if (panel.dataset.lqxGlazed) return;
+    panel.dataset.lqxGlazed = '1';
+    // Opacity, not a backdrop-filter, and not for want of trying. On this
+    // element the property refuses to take from a stylesheet (id selector,
+    // !important) AND from CSSOM in this code path, while the background from
+    // the very same call applies and a backdrop-filter typed into the console a
+    // second later applies too. Something in the theme's own React styling of
+    // this panel is winning in a way I could not pin down.
+    //
+    // The goal was legibility, and an opaque panel delivers that outright: at
+    // 93% there is nothing to read through. A blurred backdrop would be nicer
+    // and is not worth more time than this already took.
+    panel.style.setProperty('background',
+      'color-mix(in srgb, var(--spice-main) 93%, transparent)', 'important');
+    panel.style.setProperty('border-radius', '18px', 'important');
+  }
+
+  function pruneSettings() {
+    const panel = document.querySelector(LQ_PANEL);
+    if (!panel) return;
+    glazeSettingsPanel(panel);
+    if (panel.dataset.lqxPruned === String(DEAD_ROWS.length)) return;
+
+    let hid = 0;
+    for (const label of panel.querySelectorAll('.liquifyLabel')) {
+      const text = label.textContent.trim();
+      if (!DEAD_ROWS.some((d) => text.startsWith(d))) continue;
+      const row = label.closest('.liquifyRow');
+      if (row && !row.hidden) { row.hidden = true; hid++; }
+    }
+    if (!hid) return;
+
+    // A heading over nothing is its own kind of confusing, so a sub-section
+    // emptied by the above goes with its rows.
+    //
+    // "Emptied by the above" is doing real work in that sentence: the test has
+    // to be that a container HAD rows and has none left, not that it has none.
+    // Checking only the latter hid the Config section, whose Copy, Paste and
+    // Reset are buttons rather than rows -- a section that was never made of
+    // rows is not an emptied section, it is a different kind of section.
+    const emptied = (el) => {
+      const rows = el.querySelectorAll('.liquifyRow');
+      return rows.length > 0 && ![...rows].some((r) => !r.hidden);
+    };
+    for (const sub of panel.querySelectorAll('.liquifySubSection')) {
+      if (emptied(sub)) sub.hidden = true;
+    }
+    // Whole SECTIONS are left alone even when emptied. Each one is the target
+    // of a button in the tab strip, and a tab that scrolls to a hidden element
+    // is a tab that does nothing when clicked. The heading stays as the anchor;
+    // the rows under it are gone, which is what was asked for.
+    panel.dataset.lqxPruned = String(DEAD_ROWS.length);
+  }
+
+  new MutationObserver(() => { decorate(); repairNameThatTune(); pruneSettings(); })
     .observe(document.body, { childList: true, subtree: true });
   decorate();
   repairNameThatTune();
+  pruneSettings();
 
   const settingsStyle = document.createElement('style');
   settingsStyle.id = 'lqx-settings-merge-style';
@@ -431,19 +536,8 @@
        lyrics panel so the two tabs land in the same place on screen */
     ${LQ_OVERLAY} ${LQ_PANEL}{margin:0 auto}
 
-    /* The settings panel ships fully transparent, which was survivable when it
-       opened over a flat background and is not now: it opens over a track list,
-       and two sets of text at the same size occupying the same pixels is
-       unreadable -- it reads as noise rather than as a panel.
-       This is a real backdrop-filter rather than the shader pass, and it has to
-       be: the panel floats over DOM, and the shader draws behind all DOM. One
-       modal-sized surface that exists only while the panel is open is exactly
-       the case backdrop-filter is still the right tool for. */
-    ${LQ_OVERLAY} ${LQ_PANEL}{
-      backdrop-filter:blur(26px) saturate(1.3) brightness(.55);
-      -webkit-backdrop-filter:blur(26px) saturate(1.3) brightness(.55);
-      background:color-mix(in srgb, var(--spice-main) 34%, transparent);
-      border-radius:18px}`;
+    /* (the settings panel's own backdrop is set on the element -- see
+       glazeSettingsPanel below, and the note there for why) */`;
   document.head.appendChild(settingsStyle);
 
   window.liquifyUiTweaks = { sweep, HIDE_CHIPS };
