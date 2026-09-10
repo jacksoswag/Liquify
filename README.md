@@ -216,6 +216,26 @@ surface with nothing but background behind it.
   it was sub-pixel on anything smaller than the play bar, and every attempt to
   make it worth that price either stayed invisible (1/255 against a 1/255 noise
   floor) or took the app to 90% GPU. Removed, not made optional.
+- **Blur inside the filter, not after it.** The theme emits
+  `backdrop-filter: var(--glass-filter) blur(var(--liquify-glass-blur, 2px))`,
+  and a CSS filter list runs left to right, so the blur was landing on the
+  refraction instead of the backdrop. Measured on the play bar over a track
+  list: at `0px` you get refraction and no blur; at `2px`, refraction and a
+  faint blur; at `18px`, **no refraction and a blur visibly weaker than a plain
+  `backdrop-filter: blur(18px)`** on the same element, with legible text still
+  coming through top and bottom. Same cause for both: the reference filter's
+  region is its element's own box, so its output is clipped there before the
+  CSS blur runs, leaving the blur nothing to sample past the edge. The blur is
+  now the trailing `feGaussianBlur` in the shared graph
+  (`stdDeviation = radius / 2`) with the filter region widened to 150% to give
+  it room. Widening the region alone leaves the refraction pixel-identical, so
+  this costs the blur and nothing else, on the same single backdrop surface.
+- **`lqx-glass` was two elements.** The shared filter and
+  liquify-fabric-bg.js's glass canvas both had that id, and `url(#lqx-glass)`
+  resolves to whichever comes first in the document -- the filter, but only
+  because this extension is listed before that one. The filter is `lqx-refract`
+  now; the failure mode was every glass surface in the app silently losing its
+  filter.
 - **Dead backdrop elimination.** 115 of 137 glass surfaces were doing nothing:
   96 zero-area/offscreen, 12 at `opacity:0`, and 7 running `blur(0px)` -- a
   zero-radius blur is a visual no-op but still allocates a backdrop render

@@ -17,6 +17,13 @@
 //    inside the filter graph, and stock Liquify regenerates it from a
 //    ResizeObserver on every element resize. A raster blit is far cheaper.
 //
+// A third change does alter it, and is here because this is the file that owns
+// the filter graph: the theme's glass blur is moved from a CSS `blur()` chained
+// after the refraction into a primitive inside it. Chained, the blur runs on
+// the refraction's already-clipped output, which is why turning that slider up
+// used to cost the refraction and still not blur properly. See the block above
+// rebuildGlassFilter for the measurements.
+//
 // There is no chromatic-aberration path any more. The filter had a second form
 // that ran the displacement three times, once per colour channel, for an RGB
 // fringe; it cost 32 GPU points measured, it was sub-pixel on anything smaller
@@ -71,7 +78,6 @@
   host.setAttribute('style', 'position:fixed;top:0;left:0;width:0;height:0;pointer-events:none');
   const defs = document.createElementNS(NS, 'defs');
   const map = rasterMap(400, 200, 20, 0.035, 2);
-  defs.appendChild(buildFilter(ID + '-glass', { scale: -80, href: map, post: 0 }));
 
   // ---- the evolving background lives in liquify-fabric-bg.js ----
   //
@@ -98,6 +104,51 @@
     speed:    Math.max(1, Math.min(100, readNum(DRIFT_SPEED_KEY, 65))),
   });
 
+  // ---- glass blur: inside the filter, not chained after it ----
+  //
+  // The theme emits, for every glass surface,
+  //
+  //   backdrop-filter: var(--glass-filter) blur(var(--liquify-glass-blur, 2px))
+  //
+  // and a CSS filter list runs left to right, so that blurs the REFRACTION
+  // rather than the backdrop. Measured on the play bar against a track list:
+  //
+  //   blur 0px ..... refraction, no blur          (what the fork shipped)
+  //   blur 2px ..... refraction, a faint blur     (the theme's default)
+  //   blur 18px .... no refraction, and a blur visibly weaker than a plain
+  //                  `backdrop-filter: blur(18px)` on the same element, with
+  //                  legible text still coming through at the top and bottom
+  //
+  // Both of those are the same cause. The reference filter's region is its
+  // element's own box, so its output is clipped there before the CSS blur
+  // runs; the blur then has nothing to sample past the edge and falls off,
+  // and whatever displacement survived is smeared into the average. Turning
+  // the slider up therefore does not add blur so much as it trades the glass
+  // for a bad approximation of one.
+  //
+  // So the blur is built into the shared filter graph instead -- as the
+  // trailing feGaussianBlur `buildFilter` already takes -- and the region is
+  // widened to give it room to reach past the element. Verified: widening the
+  // region on its own leaves the refraction pixel-identical, so this costs the
+  // blur and nothing else, on the same single backdrop surface as before.
+  // CSS `blur()` equivalence is stdDeviation = radius / 2.
+  const BLUR_KEY = 'liquify-glass-blur';                 // px, written by the theme's slider
+  const glassBlurPx = () => Math.max(0, Math.min(64, readNum(BLUR_KEY, 2)));
+
+  function rebuildGlassFilter() {
+    const px = glassBlurPx();
+    // Scoped to defs deliberately: `getElementById` would be ambiguous here,
+    // since liquify-fabric-bg.js gives its glass canvas the same id.
+    defs.querySelector('#' + ID + '-refract')?.remove();
+    const f = buildFilter(ID + '-refract', { scale: -80, href: map, post: px / 2 });
+    if (px > 0) {
+      f.setAttribute('x', '-25%');     f.setAttribute('y', '-25%');
+      f.setAttribute('width', '150%'); f.setAttribute('height', '150%');
+    }
+    defs.appendChild(f);
+  }
+  rebuildGlassFilter();
+
   host.appendChild(defs);
   document.body.appendChild(host);
 
@@ -109,8 +160,20 @@
   document.head.appendChild(style);
   function applyGlassStyle() {
     style.textContent =
-      `:root, html [data-liquify]{--glass-filter:url(#${ID}-glass) !important;` +
-      `--liquify-filter:url(#${ID}-glass) !important;}` +
+      // `-refract` rather than `-glass`: liquify-fabric-bg.js gives its glass
+      // canvas id `lqx-glass` too, and `url(#lqx-glass)` resolves to whichever
+      // of the two is first in the document. It happens to be the filter today
+      // only because this extension is listed before that one, and the failure
+      // mode if that order ever changes is every glass surface in the app
+      // silently losing its filter.
+      // `html:root` rather than `:root`: the theme declares --liquify-glass-blur
+      // with !important too, and between two !important declarations the more
+      // specific selector wins whatever order the style elements landed in.
+      `html:root, html [data-liquify]{--glass-filter:url(#${ID}-refract) !important;` +
+      `--liquify-filter:url(#${ID}-refract) !important;` +
+      // The blur lives inside that filter now (see rebuildGlassFilter), so the
+      // theme's own blur term is zeroed rather than left to run a second time.
+      `--liquify-glass-blur:0px !important;}` +
       // A full-viewport backdrop-filter that paints nothing.
       //
       // The theme reserves space for the window buttons with
@@ -128,6 +191,17 @@
       `backdrop-filter:none!important;-webkit-backdrop-filter:none!important}`;
   }
   applyGlassStyle();
+
+  // The theme's slider writes localStorage and rewrites its own style element.
+  // Neither fires anything this extension can listen for, so the value is
+  // re-read on a slow poll and the graph rebuilt only when it actually moved.
+  let blurWas = glassBlurPx();
+  setInterval(() => {
+    const now = glassBlurPx();
+    if (now === blurWas) return;
+    blurWas = now;
+    rebuildGlassFilter();
+  }, 1000);
 
 
   // ---- the theme's own background layers ----
