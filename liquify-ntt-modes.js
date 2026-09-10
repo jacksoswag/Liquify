@@ -7,8 +7,8 @@
 //                    state: { URIs: [...] } })
 //
 // which is how its context-menu entry works. That contract is the whole
-// integration here. Nothing in the app is patched: this builds a track list and
-// hands it over the same way, so the game keeps running its own round logic.
+// integration here. The app is not forked: this builds a track list and hands
+// it over the same way, so the game keeps running its own round logic.
 //
 // WHERE THE DATA COMES FROM, and why not the obvious place.
 //
@@ -46,51 +46,43 @@
     return setTimeout(liquifyNttModes, 400);
   }
 
-  // Resolved per call, never captured. Spicetify replaces the whole GraphQL
-  // object once its real client is up, so an alias taken at extension load time
-  // keeps pointing at the early stub -- which has Definitions on it but no
-  // Request, and fails with "GQL.Request is not a function" only once a game is
-  // actually started.
-  const req = (name, vars) => Spicetify.GraphQL.Request(Spicetify.GraphQL.Definitions[name], vars);
-
   const SRC_KEY = 'liquify-ntt-source';
   const DIFF_KEY = 'liquify-ntt-difficulty';
   const ARG_KEY = 'liquify-ntt-arg';
   const ARG_URI_KEY = 'liquify-ntt-arg-uri';
+  const QUEUE_KEY = 'liquify-ntt-queue';        // the URIs of the game in progress
 
   // Playcount floors. Calibrated against real tracks rather than round numbers:
   // a 100M-stream song is one nearly everyone has heard, 10M is a song that
   // charted or went round somewhere, 500k is a real release with an audience
   // rather than an upload. Below that is where unnameable filler lives, which
   // is what "impossible" is for.
-  const BANDS = {
-    easy: 100e6,
-    medium: 10e6,
-    hard: 500e3,
-    impossible: 0,
-  };
+  const BANDS = { easy: 100e6, medium: 10e6, hard: 500e3, impossible: 0 };
 
-  const LABELS = {
-    library: 'Your library',
-    artist: 'Artist',
-    genre: 'Genre',
-    all: 'All Spotify',
-  };
+  const SOURCES = [
+    ['library', 'Your library'],
+    ['artist', 'Artist'],
+    ['genre', 'Genre'],
+    ['all', 'All Spotify'],
+  ];
+  const DIFFICULTIES = [
+    ['easy', 'Easy'], ['medium', 'Medium'], ['hard', 'Hard'], ['impossible', 'Impossible'],
+  ];
+  const LABELS = Object.fromEntries(SOURCES);
 
   const TARGET = 60;              // tracks handed to the game; it shuffles them
   // Ceiling on album queries per game, whatever the mode. Measured: ~120ms
   // each, and a run stops as soon as it has enough, so this is the worst case
-  // (about three seconds) rather than the usual one. Set from what the bands
-  // actually yield -- at 14 a hard-difficulty genre came back with nine songs.
+  // rather than the usual one.
   const MAX_ALBUM_QUERIES = 24;
 
   const cfg = () => ({
     source: localStorage.getItem(SRC_KEY) || 'library',
     difficulty: localStorage.getItem(DIFF_KEY) || 'medium',
     arg: localStorage.getItem(ARG_KEY) || '',
-    // Set only by picking from the suggestion list, and only trusted while the
-    // text still matches what was picked -- otherwise typing over a chosen
-    // artist would quietly keep quizzing you on the old one.
+    // Set only by picking from the suggestion list, and dropped the moment the
+    // text is edited -- otherwise typing over a chosen artist would quietly
+    // keep quizzing you on the old one.
     argUri: localStorage.getItem(ARG_URI_KEY) || '',
   });
 
@@ -134,25 +126,27 @@
     },
   };
 
+  // Every GraphQL call this file makes goes through here, and it is also what
+  // marks a call as ours for the interceptor further down -- which rewrites the
+  // GAME's searches and must not touch this file's own.
+  let ourCall = false;
+  function gql(def, vars) {
+    const d = typeof def === 'string' ? Spicetify.GraphQL.Definitions[def] : def;
+    ourCall = true;
+    try { return Spicetify.GraphQL.Request(d, vars); } finally { ourCall = false; }
+  }
+
   // The search the search modal uses. Every one of these variables is required;
   // omit any and the call comes back HttpResponseError with nothing to say
   // about which. Results arrive as one ranked list of mixed entity types under
   // topResultsV2, not as per-type sections, so callers filter by __typename.
   async function searchTop(term, limit = 10) {
-    const r = await req('searchModalResults', {
-      searchTerm: term,
-      offset: 0,
-      limit,
-      numberOfTopResults: limit,
-      includeAudiobooks: true,
-      includeArtistHasConcertsField: false,
-      includePreReleases: false,
-      includeLocalConcertsField: false,
-      includeAuthors: false,
+    const r = await gql('searchModalResults', {
+      searchTerm: term, offset: 0, limit, numberOfTopResults: limit,
+      includeAudiobooks: true, includeArtistHasConcertsField: false,
+      includePreReleases: false, includeLocalConcertsField: false, includeAuthors: false,
     });
-    return (r?.data?.searchV2?.topResultsV2?.itemsV2 || [])
-      .map((i) => i.item?.data)
-      .filter(Boolean);
+    return (r?.data?.searchV2?.topResultsV2?.itemsV2 || []).map((i) => i.item?.data).filter(Boolean);
   }
 
   // An Artist entity carries its name under `profile`, not at the top level
@@ -165,7 +159,7 @@
   // Boys...; a bare "x" gives XXXTENTACION, X, Juice WRLD, Charli xcx.
   async function searchArtists(term, n = 8) {
     try {
-      const r = await Spicetify.GraphQL.Request(PERSISTED.searchArtists, {
+      const r = await gql(PERSISTED.searchArtists, {
         searchTerm: term, offset: 0, limit: 30, numberOfTopResults: 20,
         includePreReleases: false, includeAlbumPreReleases: false,
         includeAudiobooks: true, includeAuthors: true, includeEpisodeContentRatingsV2: true,
@@ -184,27 +178,67 @@
     return (await searchTop(term, 40)).filter((d) => d.__typename === 'Artist').slice(0, n);
   }
 
+  // Genres come off the same top-results query Spotify's own search page runs,
+  // which surfaces far more of them than the modal search does (17 for "jaz"
+  // against six). It still misses plenty -- neither query returns a Genre for
+  // "shoe", or for the whole word "hyperpop" -- which is what the fixed list
+  // further down is for.
+  async function searchGenres(term) {
+    try {
+      const r = await gql(PERSISTED.searchTopResultsList, {
+        query: term, limit: 50, offset: 0, numberOfTopResults: 50,
+        includeArtistHasConcertsField: false, includeAudiobooks: true, includeAuthors: true,
+        includePreReleases: true, includeAlbumPreReleases: false,
+        includeEpisodeContentRatingsV2: true, isPrefix: null,
+        sectionFilters: ['GENERIC', 'VIDEO_CONTENT'],
+      });
+      return (r?.data?.searchV2?.topResultsV2?.itemsV2 || [])
+        .map((i) => i.item?.data)
+        .filter((d) => d?.__typename === 'Genre' && d.name)
+        .map((d) => d.name);
+    } catch {
+      return (await searchTop(term, 40))
+        .filter((d) => d.__typename === 'Genre' && d.name).map((d) => d.name);
+    }
+  }
+
   // Albums and singles both count: a single is often where the one track people
   // know actually lives, and excluding them would quietly remove most of what
   // "easy" means for recent artists.
+  //
+  // Releases carry their own playability, and unplayable ones are dropped here
+  // rather than one track at a time: a pre-release, or a record withdrawn in
+  // this market, yields nothing but tracks the player refuses -- which is what
+  // produces Spotify's "can't play this right now, import it from your
+  // computer" notice in the middle of a game.
   async function artistAlbums(artistUri, n = 8) {
-    const r = await req('queryArtistDiscographyAll', { uri: artistUri, offset: 0, limit: 40 });
+    const r = await gql('queryArtistDiscographyAll', { uri: artistUri, offset: 0, limit: 40 });
     const items = r?.data?.artistUnion?.discography?.all?.items || [];
     const uris = items
-      .map((i) => i.releases?.items?.[0]?.uri)
-      .filter(Boolean);
+      .map((i) => i.releases?.items?.[0])
+      .filter((rel) => rel?.uri && rel.playability?.playable !== false)
+      .map((rel) => rel.uri);
     return shuffle(uniq(uris)).slice(0, n);
   }
 
   // The one call that carries playcount, and the reason the whole design is
   // album-shaped: a single request decorates every track on the record.
+  //
+  // `playable === true`, not merely "not false": an absent field is not a
+  // promise, and a track the player then refuses ends a round with an error
+  // notice instead of a song.
   async function albumTracks(albumUri) {
-    const r = await req('queryAlbumTracks', { uri: albumUri, offset: 0, limit: 60 });
+    const r = await gql('queryAlbumTracks', { uri: albumUri, offset: 0, limit: 60 });
     const items = r?.data?.albumUnion?.tracksV2?.items || r?.data?.albumUnion?.tracks?.items || [];
     return items
       .map((i) => i.track)
-      .filter((t) => t?.uri && t.playability?.playable !== false)
-      .map((t) => ({ uri: t.uri, name: t.name, plays: Number(t.playcount) || 0 }));
+      .filter((t) => t?.uri?.startsWith('spotify:track:') && t.playability?.playable === true)
+      .map((t) => ({
+        uri: t.uri,
+        name: t.name || '',
+        artist: (t.artists?.items || []).map((a) => a.profile?.name).filter(Boolean)[0] || '',
+        plays: Number(t.playcount) || 0,
+      }));
   }
 
   // Walks albums until it has enough tracks or runs out of budget. The budget is
@@ -221,6 +255,47 @@
       } catch { /* a single unavailable album is not worth failing the game for */ }
     }
     return out;
+  }
+
+  // ---- one song per song -----------------------------------------------------
+  //
+  // A discography is full of the same song several times over: the album cut,
+  // the instrumental, the remaster, the live take, the radio edit, the deluxe
+  // reissue. Twelve steps through a Tyler, The Creator queue turned up OKAGA CA
+  // twice and THE BROWN STAINS OF DARKEESE LATIF twice, which is a worse game
+  // than a shorter one.
+  //
+  // The normalisation deliberately MIRRORS the game's own answer check, which
+  // strips bracketed suffixes, everything after " - ", ampersands, diacritics
+  // and punctuation before comparing a guess. Anything the game would accept as
+  // the same answer is therefore the same song here by definition -- which
+  // rules out the failure where two entries are distinct to the quiz but
+  // identical to the person playing it.
+  const songKey = (t) => {
+    let s = (t.name || '').trim().toLowerCase();
+    s = s.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '');
+    s = s.replace(/\s-\s.*$/, '');
+    s = s.replace(/&/g, 'and');
+    s = s.normalize('NFD').replace(/\p{Diacritic}/gu, '');
+    s = s.replace(/[^\p{L}\p{N}]/gu, '');
+    // Keyed by artist too, so two different songs that happen to share a title
+    // are not collapsed into one.
+    return `${s} ${(t.artist || '').trim().toLowerCase()}`;
+  };
+
+  // Keeps the most-played version of each song. That is the one you are most
+  // likely to know, so it is also the one the difficulty band was chosen for --
+  // whereas keeping whichever happened to be seen first hands you the
+  // instrumental of a song you would have named instantly.
+  function dedupe(tracks) {
+    const best = new Map();
+    for (const t of tracks) {
+      const k = songKey(t);
+      if (k.startsWith(' ')) continue;          // no title at all
+      const cur = best.get(k);
+      if (!cur || t.plays > cur.plays) best.set(k, t);
+    }
+    return [...best.values()];
   }
 
   // ---- sources ---------------------------------------------------------------
@@ -244,18 +319,20 @@
       const a = t.album?.uri;
       if (a) perAlbum.set(a, (perAlbum.get(a) || 0) + 1);
     }
-    const albums = shuffle([...perAlbum.entries()])
-      .sort((x, y) => y[1] - x[1])
-      .map(([uri]) => uri);
+    const albums = shuffle([...perAlbum.entries()]).sort((x, y) => y[1] - x[1]).map(([uri]) => uri);
 
     const decorated = await tracksFromAlbums(albums, floor, TARGET * 2);
     const mine = decorated.filter((t) => savedUris.has(t.uri));
 
     // Below "hard" the floor stops doing anything useful for a personal library
     // -- most of what people save has few enough streams that the band would
-    // empty -- so an empty result falls back to the library unfiltered rather
+    // empty -- so a thin result falls back to the library unfiltered rather
     // than refusing to start.
-    return mine.length >= 8 ? mine : saved.map((t) => ({ uri: t.uri, name: t.name, plays: 0 }));
+    if (mine.length >= 8) return mine;
+    return saved.map((t) => ({
+      uri: t.uri, name: t.name || '',
+      artist: (t.artists || []).map((a) => a.name).filter(Boolean)[0] || '', plays: 0,
+    }));
   }
 
   async function fromArtist(name, floor, uri) {
@@ -270,7 +347,7 @@
   }
 
   // A genre is not a thing you can list tracks from, so it is resolved the way
-  // a person would: find artists for it, then take their records. Two albums
+  // a person would: find artists for it, then take their records. Three albums
   // per artist keeps one prolific act from becoming the whole quiz.
   async function fromGenre(name, floor) {
     const artists = await searchArtists(name, 8);
@@ -287,8 +364,7 @@
   // they work here because the difficulty floor does the quality control
   // afterwards -- the seed only has to be arbitrary, not good.
   const SEEDS = 'abcdefghijklmnopqrstuvwxyz';
-  const randomSeed = () =>
-    SEEDS[Math.floor(Math.random() * 26)] + SEEDS[Math.floor(Math.random() * 26)];
+  const randomSeed = () => SEEDS[Math.floor(Math.random() * 26)] + SEEDS[Math.floor(Math.random() * 26)];
 
   async function fromAll(floor) {
     const albums = [];
@@ -303,49 +379,97 @@
 
   async function buildQueue({ source, difficulty, arg, argUri }) {
     const floor = BANDS[difficulty] ?? 0;
-    if (source === 'artist') return fromArtist(arg, floor, argUri);
-    if (source === 'genre') return fromGenre(arg, floor);
-    if (source === 'all') return fromAll(floor);
-    return fromLibrary(floor);
+    let tracks;
+    if (source === 'artist') tracks = await fromArtist(arg, floor, argUri);
+    else if (source === 'genre') tracks = await fromGenre(arg, floor);
+    else if (source === 'all') tracks = await fromAll(floor);
+    else tracks = await fromLibrary(floor);
+    return dedupe(tracks);
   }
 
-  // ---- handing the game its songs -------------------------------------------
+  // ---- scoping the game's own suggestions ------------------------------------
+  //
+  // The guess box runs its own search, through Spicetify.GraphQL.Request with
+  // whichever of searchSuggestions / searchModalResults the client exposes. In
+  // artist mode a box offering the whole catalogue is not a hint, it is a
+  // different game -- so the search term is scoped to the chosen artist on the
+  // way past.
+  //
+  // Done by rewriting the term rather than by filtering results, because the
+  // filter Spotify applies server-side is the good one: "earf" scoped to Tyler,
+  // The Creator returns EARFQUAKE and its remix and nothing else, where
+  // filtering the unscoped results would leave whichever of that artist's
+  // tracks happened to rank for the letters typed.
+  //
+  // Narrow on purpose. It fires only on the game's route, only in artist mode,
+  // only with an artist actually chosen, only for those two search operations,
+  // and never for this file's own calls -- which is what `ourCall` is for.
+  (function scopeGuessSuggestions() {
+    const SEARCH_OPS = new Set(['searchSuggestions', 'searchModalResults']);
 
-  async function startGame() {
-    const c = cfg();
-    if ((c.source === 'artist' || c.source === 'genre') && !c.arg.trim()) {
-      Spicetify.showNotification(`Enter ${c.source === 'artist' ? 'an artist' : 'a genre'} first`, true);
-      return;
-    }
-    setBusy(true);
+    const scope = (def, vars) => {
+      try {
+        if (ourCall || !vars || !SEARCH_OPS.has(def?.name)) return vars;
+        if (!document.body.classList.contains('name-that-tune')) return vars;
+        const c = cfg();
+        if (c.source !== 'artist' || !c.argUri || !c.arg) return vars;
+        // The two operations name the term differently.
+        const field = 'query' in vars ? 'query' : 'searchTerm' in vars ? 'searchTerm' : null;
+        if (!field || typeof vars[field] !== 'string' || vars[field].includes('artist:')) return vars;
+        return { ...vars, [field]: `artist:"${c.arg}" ${vars[field]}` };
+      } catch { return vars; }   // never let scoping break a search
+    };
+
+    // Installed as an accessor, and re-installed if the object is swapped.
+    //
+    // A plain assignment here does nothing, which is how the first version of
+    // this shipped broken: Spicetify hands out a GraphQL object during early
+    // boot and REPLACES it once its real client is ready, so a wrapper written
+    // over Request at extension-load time is thrown away before anything ever
+    // calls it. (Spicetify.GraphQL.Request.name was "" rather than the
+    // wrapper's, which is how that was caught.)
+    //
+    // The setter is the part that matters: whatever Spicetify assigns later
+    // becomes the thing the wrapper delegates to, instead of replacing it.
+    const patch = (obj) => {
+      if (!obj || typeof obj.Request !== 'function' || obj.__lqxScoped) return;
+      let real = obj.Request.bind(obj);
+      const wrapper = (def, vars, ...rest) => real(def, scope(def, vars), ...rest);
+      try {
+        Object.defineProperty(obj, 'Request', {
+          configurable: true,
+          get: () => wrapper,
+          set: (v) => { real = typeof v === 'function' ? v.bind(obj) : v; },
+        });
+        Object.defineProperty(obj, '__lqxScoped', { value: true, configurable: true });
+      } catch { /* frozen object -- scoping is a nicety, not a requirement */ }
+    };
+
+    patch(Spicetify.GraphQL);
+    let current = Spicetify.GraphQL;
     try {
-      const tracks = await buildQueue(c);
-      if (!tracks.length) {
-        // Harder means a LOWER playcount floor, so an empty easy round is
-        // fixed by going harder, not easier. Worth stating in the message:
-        // the instinct on an empty result is to reach the other way.
-        Spicetify.showNotification(
-          `Nothing that popular in ${LABELS[c.source].toLowerCase()} — try a harder difficulty`, true);
-        return;
-      }
-      const uris = shuffle(uniq(tracks.map((t) => t.uri))).slice(0, TARGET);
-      // The app's own contract, unchanged: it expands, shuffles and plays what
-      // arrives in state.URIs, and the timestamp is what makes an identical
-      // route a new game rather than a no-op.
-      Spicetify.Platform.History.push({
-        pathname: '/name-that-tune',
-        search: `?t=${Date.now()}`,
-        state: { URIs: uris },
+      Object.defineProperty(Spicetify, 'GraphQL', {
+        configurable: true,
+        get: () => current,
+        set: (v) => { current = v; patch(v); },
       });
-      Spicetify.showNotification(`${uris.length} songs — ${LABELS[c.source]}, ${c.difficulty}`);
-    } catch (e) {
-      Spicetify.showNotification(String(e?.message || e), true);
-    } finally {
-      setBusy(false);
-    }
-  }
+    } catch {}
+  })();
 
-  // ---- the bar ---------------------------------------------------------------
+  // ---- is a game running -----------------------------------------------------
+  //
+  // "Active" means the track playing is one this panel queued. That is what
+  // survives both walking away from the page and restarting Spotify, and it
+  // goes false on its own once you play something else -- so the panel opens
+  // when there is nothing to come back to, and stays out of the way when there
+  // is.
+  const loadQueue = () => {
+    try { return new Set(JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]')); } catch { return new Set(); }
+  };
+  let gameQueue = loadQueue();
+  const gameActive = () => gameQueue.has(Spicetify.Player.data?.item?.uri || ' ');
+
+  // ---- the panel -------------------------------------------------------------
   //
   // Fixed, and never a child of anything the game renders. The whole main view
   // belongs to React, and appending into a React-owned parent is what broke the
@@ -356,56 +480,92 @@
   const style = document.createElement('style');
   style.id = 'lqx-ntt-modes-style';
   style.textContent = `
-    #lqx-ntt-bar{position:fixed;z-index:5;display:none;align-items:center;gap:8px;
-      padding:8px 10px;border-radius:14px;
+    /* Above the game's own suggestion dropdown, which sits at z-index 100:
+       otherwise the panel opens UNDER a list of song titles left over from the
+       guess box behind it. */
+    #lqx-ntt-root{position:fixed;z-index:200;display:none;pointer-events:none}
+    body.name-that-tune #lqx-ntt-root{display:block}
+
+    #lqx-ntt-new{position:absolute;top:0;right:0;pointer-events:auto;display:none;
+      align-items:center;gap:6px;appearance:none;border:0;cursor:pointer;border-radius:999px;
+      padding:8px 15px;font:inherit;font-size:12px;font-weight:700;color:var(--spice-text);
       background:color-mix(in srgb,var(--spice-main) 62%,transparent);
-      box-shadow:inset 0 0 0 1px rgba(255,255,255,.10),0 12px 30px rgba(0,0,0,.35);
-      backdrop-filter:blur(22px);font:inherit}
-    body.name-that-tune #lqx-ntt-bar{display:flex}
-    #lqx-ntt-bar select,#lqx-ntt-bar input{appearance:none;border:0;border-radius:9px;
-      padding:7px 10px;font:inherit;font-size:12px;color:var(--spice-text);
-      background:rgba(255,255,255,.09)}
-    #lqx-ntt-bar select:hover,#lqx-ntt-bar input:hover{background:rgba(255,255,255,.14)}
-    #lqx-ntt-bar input{width:150px}
-    #lqx-ntt-bar input::placeholder{color:var(--spice-subtext)}
-    #lqx-ntt-bar button{appearance:none;border:0;cursor:pointer;border-radius:999px;
-      padding:7px 16px;font:inherit;font-size:12px;font-weight:700;
-      color:var(--spice-main);background:var(--spice-button)}
-    #lqx-ntt-bar button:disabled{opacity:.55;cursor:progress}
-    #lqx-ntt-bar[data-arg="hide"] input{display:none}
-    #lqx-ntt-argwrap{position:relative;display:flex}
-    #lqx-ntt-bar[data-arg="hide"] #lqx-ntt-argwrap{display:none}
-    /* Opens upward: this bar sits at the bottom of the view, so a list hanging
-       below it would be off-screen. */
-    #lqx-ntt-sugg{position:absolute;bottom:calc(100% + 6px);left:0;z-index:1;
-      display:none;flex-direction:column;width:230px;max-height:260px;overflow-y:auto;
-      overscroll-behavior:contain;padding:4px;border-radius:11px;
-      background:color-mix(in srgb,var(--spice-main) 94%,transparent);
-      box-shadow:inset 0 0 0 1px rgba(255,255,255,.12),0 14px 34px rgba(0,0,0,.45);
+      box-shadow:inset 0 0 0 1px rgba(255,255,255,.12),0 10px 26px rgba(0,0,0,.34);
       backdrop-filter:blur(22px)}
+    #lqx-ntt-new:hover{background:color-mix(in srgb,var(--spice-main) 80%,transparent)}
+    #lqx-ntt-root[data-panel="0"] #lqx-ntt-new{display:inline-flex}
+
+    /* A scrim, so the page behind reads as inactive and a stray click lands
+       somewhere harmless rather than on the guess box. Sized from the viewport
+       rather than from the root, which is inset to the main view. */
+    #lqx-ntt-scrim{position:fixed;inset:0;display:none;pointer-events:auto;
+      background:rgba(0,0,0,.45);backdrop-filter:blur(2px)}
+    #lqx-ntt-root[data-panel="1"] #lqx-ntt-scrim{display:block}
+
+    #lqx-ntt-panel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+      pointer-events:auto;display:none;flex-direction:column;gap:16px;
+      width:min(400px,86%);padding:22px;border-radius:20px;
+      background:color-mix(in srgb,var(--spice-main) 76%,transparent);
+      box-shadow:inset 0 0 0 1px rgba(255,255,255,.12),0 26px 60px rgba(0,0,0,.5);
+      backdrop-filter:blur(30px)}
+    #lqx-ntt-root[data-panel="1"] #lqx-ntt-panel{display:flex}
+
+    #lqx-ntt-panel h2{margin:0;font:inherit;font-size:17px;font-weight:700;color:var(--spice-text)}
+    #lqx-ntt-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+    #lqx-ntt-close{appearance:none;border:0;cursor:pointer;border-radius:50%;width:26px;height:26px;
+      font:inherit;font-size:14px;line-height:1;color:var(--spice-subtext);
+      background:rgba(255,255,255,.09);display:none}
+    #lqx-ntt-close:hover{color:var(--spice-text);background:rgba(255,255,255,.16)}
+    #lqx-ntt-root[data-active="1"] #lqx-ntt-close{display:block}
+
+    .lqx-ntt-field{display:flex;flex-direction:column;gap:7px}
+    .lqx-ntt-label{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+      color:var(--spice-subtext)}
+    .lqx-ntt-seg{display:flex;flex-wrap:wrap;gap:6px}
+    .lqx-ntt-seg button{appearance:none;border:0;cursor:pointer;border-radius:999px;
+      padding:7px 13px;font:inherit;font-size:12px;font-weight:600;
+      color:var(--spice-subtext);background:rgba(255,255,255,.08)}
+    .lqx-ntt-seg button:hover{color:var(--spice-text);background:rgba(255,255,255,.15)}
+    .lqx-ntt-seg button[aria-pressed="true"]{color:var(--spice-main);background:var(--spice-text)}
+
+    #lqx-ntt-argfield{display:none}
+    #lqx-ntt-root[data-arg="1"] #lqx-ntt-argfield{display:flex}
+    #lqx-ntt-argwrap{position:relative;display:flex}
+    #lqx-ntt-arg{width:100%;appearance:none;border:0;border-radius:10px;padding:9px 12px;
+      font:inherit;font-size:13px;color:var(--spice-text);background:rgba(255,255,255,.09)}
+    #lqx-ntt-arg:focus{outline:none;background:rgba(255,255,255,.15)}
+    #lqx-ntt-arg::placeholder{color:var(--spice-subtext)}
+
+    #lqx-ntt-sugg{position:absolute;top:calc(100% + 6px);left:0;z-index:1;
+      display:none;flex-direction:column;width:100%;max-height:196px;overflow-y:auto;
+      overscroll-behavior:contain;padding:4px;border-radius:11px;
+      background:color-mix(in srgb,var(--spice-main) 96%,transparent);
+      box-shadow:inset 0 0 0 1px rgba(255,255,255,.12),0 14px 34px rgba(0,0,0,.45)}
     #lqx-ntt-sugg[data-open="1"]{display:flex}
-    #lqx-ntt-sugg button{display:block;width:100%;text-align:left;border-radius:7px;
-      padding:7px 9px;font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;
-      text-overflow:ellipsis;color:var(--spice-text);background:transparent}
-    #lqx-ntt-sugg button{display:flex;align-items:center;gap:8px}
+    #lqx-ntt-sugg button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+      appearance:none;border:0;cursor:pointer;border-radius:7px;padding:6px 8px;font:inherit;
+      font-size:12px;color:var(--spice-text);background:transparent}
     #lqx-ntt-sugg button span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     #lqx-ntt-sugg img{flex:0 0 auto;width:26px;height:26px;border-radius:50%;object-fit:cover}
     #lqx-ntt-sugg button:hover,#lqx-ntt-sugg button[data-on="1"]{background:rgba(255,255,255,.14)}
+
+    #lqx-ntt-go{appearance:none;border:0;cursor:pointer;border-radius:999px;padding:11px 18px;
+      font:inherit;font-size:13px;font-weight:700;color:var(--spice-main);background:var(--spice-button)}
+    #lqx-ntt-go:disabled{opacity:.55;cursor:progress}
 
     /* The play bar goes for the whole of the game, not just while a round is
        being guessed. The game hides its left-hand side itself -- cover, title,
        artist -- but leaves the transport, the scrubber and the track time
        sitting under the guess box, where they are no use (the game has its own
-       Play 1s) and where this bar would otherwise land on top of them.
-       Route-wide rather than round-wide so it does not slide back in and out
-       between every reveal and the next song.
+       Play 1s). Route-wide rather than round-wide so it does not slide back in
+       and out between every reveal and the next song.
 
        The slide, the timing and the extra 24px that carries the floating
        player's shadow out with it are liquify-keys' -- the transition it
        installs lives on the bar unconditionally, so this animates on the way in
-       as well. The html-body prefix is there for the same reason it is there: the
-       Dynamic Search Bar snippet sets transform:none !important on both of
-       these selectors, and this has to outrank it. */
+       as well. The html-body prefix is needed for the same reason it is needed
+       there: the Dynamic Search Bar snippet sets transform:none !important on
+       both of these selectors, and this has to outrank it. */
     html body.name-that-tune .Root__now-playing-bar,
     html body.name-that-tune aside[aria-label="Now playing bar"]{
       transform:translateY(calc(100% + 24px))!important;opacity:0!important;
@@ -413,71 +573,90 @@
       transition:transform .34s cubic-bezier(.32,.72,0,1),opacity .26s ease,visibility 0s linear .34s}`;
   document.head.appendChild(style);
 
-  const bar = document.createElement('div');
-  bar.id = 'lqx-ntt-bar';
-  bar.innerHTML = `
-    <select id="lqx-ntt-source" aria-label="Song source">
-      <option value="library">Your library</option>
-      <option value="artist">Artist</option>
-      <option value="genre">Genre</option>
-      <option value="all">All Spotify</option>
-    </select>
-    <span id="lqx-ntt-argwrap">
-      <input id="lqx-ntt-arg" type="text" spellcheck="false" autocomplete="off" placeholder="name">
-      <span id="lqx-ntt-sugg" role="listbox"></span>
-    </span>
-    <select id="lqx-ntt-diff" aria-label="Difficulty">
-      <option value="easy">Easy</option>
-      <option value="medium">Medium</option>
-      <option value="hard">Hard</option>
-      <option value="impossible">Impossible</option>
-    </select>
-    <button id="lqx-ntt-go" type="button">New game</button>`;
-  document.body.appendChild(bar);
+  const root = document.createElement('div');
+  root.id = 'lqx-ntt-root';
+  root.innerHTML = `
+    <div id="lqx-ntt-scrim"></div>
+    <button id="lqx-ntt-new" type="button">+ New game</button>
+    <div id="lqx-ntt-panel" role="dialog" aria-label="New game">
+      <div id="lqx-ntt-head">
+        <h2>New game</h2>
+        <button id="lqx-ntt-close" type="button" aria-label="Close">&#10005;</button>
+      </div>
+      <div class="lqx-ntt-field">
+        <span class="lqx-ntt-label">Songs from</span>
+        <div class="lqx-ntt-seg" id="lqx-ntt-source"></div>
+      </div>
+      <div class="lqx-ntt-field" id="lqx-ntt-argfield">
+        <span class="lqx-ntt-label" id="lqx-ntt-arglabel">Artist</span>
+        <span id="lqx-ntt-argwrap">
+          <input id="lqx-ntt-arg" type="text" spellcheck="false" autocomplete="off">
+          <span id="lqx-ntt-sugg" role="listbox"></span>
+        </span>
+      </div>
+      <div class="lqx-ntt-field">
+        <span class="lqx-ntt-label">Difficulty</span>
+        <div class="lqx-ntt-seg" id="lqx-ntt-diff"></div>
+      </div>
+      <button id="lqx-ntt-go" type="button">Start</button>
+    </div>`;
+  document.body.appendChild(root);
 
-  const $src = bar.querySelector('#lqx-ntt-source');
-  const $arg = bar.querySelector('#lqx-ntt-arg');
-  const $diff = bar.querySelector('#lqx-ntt-diff');
-  const $go = bar.querySelector('#lqx-ntt-go');
-  const $sugg = bar.querySelector('#lqx-ntt-sugg');
+  const $new = root.querySelector('#lqx-ntt-new');
+  const $close = root.querySelector('#lqx-ntt-close');
+  const $srcSeg = root.querySelector('#lqx-ntt-source');
+  const $diffSeg = root.querySelector('#lqx-ntt-diff');
+  const $argLabel = root.querySelector('#lqx-ntt-arglabel');
+  const $arg = root.querySelector('#lqx-ntt-arg');
+  const $sugg = root.querySelector('#lqx-ntt-sugg');
+  const $go = root.querySelector('#lqx-ntt-go');
+
+  const paintSegment = (el, value) => {
+    for (const b of el.children) b.setAttribute('aria-pressed', String(b.dataset.value === value));
+  };
+
+  function buildSegment(el, options, key, onPick) {
+    el.textContent = '';
+    for (const [value, label] of options) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = label;
+      b.dataset.value = value;
+      b.addEventListener('click', () => {
+        localStorage.setItem(key, value);
+        paintSegment(el, value);
+        onPick(value);
+      });
+      el.appendChild(b);
+    }
+  }
 
   const setBusy = (b) => {
     $go.disabled = b;
-    $go.textContent = b ? 'Finding songs…' : 'New game';
+    $go.textContent = b ? 'Finding songs...' : 'Start';
   };
 
-  function syncArgVisibility() {
-    const needsArg = $src.value === 'artist' || $src.value === 'genre';
-    bar.dataset.arg = needsArg ? 'show' : 'hide';
-    $arg.placeholder = $src.value === 'genre' ? 'e.g. shoegaze' : 'e.g. Daft Punk';
+  const openPanel = (open) => {
+    root.dataset.panel = open ? '1' : '0';
+    if (open) setTimeout(() => { if (root.dataset.arg === '1') $arg.focus(); }, 20);
+    else closeSuggestions();
+  };
+
+  function syncArgField() {
+    const src = cfg().source;
+    const needsArg = src === 'artist' || src === 'genre';
+    root.dataset.arg = needsArg ? '1' : '0';
+    $argLabel.textContent = src === 'genre' ? 'Genre' : 'Artist';
+    $arg.placeholder = src === 'genre' ? 'e.g. shoegaze' : 'e.g. Daft Punk';
   }
 
-  const c0 = cfg();
-  $src.value = c0.source;
-  $diff.value = c0.difficulty;
-  $arg.value = c0.arg;
-  syncArgVisibility();
-
-  $src.addEventListener('change', () => {
-    localStorage.setItem(SRC_KEY, $src.value);
-    // An artist URI means nothing once the source is a genre, and vice versa.
-    localStorage.removeItem(ARG_URI_KEY);
-    closeSuggestions();
-    syncArgVisibility();
-  });
-  $diff.addEventListener('change', () => localStorage.setItem(DIFF_KEY, $diff.value));
   // ---- suggestions -----------------------------------------------------------
   //
-  // Artists come straight out of the same search the client's own search box
-  // uses, so they are ranked the way Spotify ranks them and a two-letter stub
-  // finds the obvious act.
-  //
-  // Genres cannot rely on that alone. Spotify does return Genre entities, but
-  // only for terms it already considers a genre and mostly only once the word
-  // is nearly complete: "jaz" offers Jazz, Cool jazz and Smooth Jazz, while
-  // "shoe" and even the whole of "hyperpop" offer none at all. So live genre
-  // hits are merged with a fixed list, which is what makes the partial-word
-  // case work rather than silently returning nothing.
+  // Genres cannot rely on Spotify alone: it returns Genre entities only for
+  // terms it already considers a genre, and mostly only once the word is nearly
+  // complete -- "jaz" offers Jazz, Cool jazz and Smooth Jazz, while "shoe" and
+  // even the whole of "hyperpop" offer none. Live hits merge with this list,
+  // which is what makes the partial-word case work at all.
   const GENRES = [
     'acid jazz', 'afrobeats', 'alternative rock', 'ambient', 'americana', 'bedroom pop',
     'blues', 'bossa nova', 'breakbeat', 'britpop', 'chillwave', 'city pop', 'classical',
@@ -537,35 +716,11 @@
     $arg.value = item.label;
     localStorage.setItem(ARG_KEY, item.label);
     // An artist suggestion carries the exact URI, which saves resolving the
-    // name again at start and removes the chance of resolving it differently.
+    // name again at start, removes the chance of resolving it differently, and
+    // is what lets the guess box be scoped to that artist.
     if (item.uri) localStorage.setItem(ARG_URI_KEY, item.uri);
     else localStorage.removeItem(ARG_URI_KEY);
     closeSuggestions();
-  }
-
-  // Genres come off the same top-results query Spotify's own search page runs,
-  // which surfaces far more of them than the modal search does (17 for "jaz"
-  // against six). It still misses plenty -- neither query returns a Genre for
-  // "shoe", or for the whole word "hyperpop" -- which is what the fixed list
-  // above is for. Live hits first, since those are Spotify's own vocabulary.
-  async function searchGenres(term) {
-    try {
-      const r = await Spicetify.GraphQL.Request(PERSISTED.searchTopResultsList, {
-        query: term, limit: 50, offset: 0, numberOfTopResults: 50,
-        includeArtistHasConcertsField: false, includeAudiobooks: true, includeAuthors: true,
-        includePreReleases: true, includeAlbumPreReleases: false,
-        includeEpisodeContentRatingsV2: true, isPrefix: null,
-        sectionFilters: ['GENERIC', 'VIDEO_CONTENT'],
-      });
-      return (r?.data?.searchV2?.topResultsV2?.itemsV2 || [])
-        .map((i) => i.item?.data)
-        .filter((d) => d?.__typename === 'Genre' && d.name)
-        .map((d) => d.name);
-    } catch {
-      return (await searchTop(term, 40))
-        .filter((d) => d.__typename === 'Genre' && d.name)
-        .map((d) => d.name);
-    }
   }
 
   async function fetchSuggestions(term) {
@@ -573,11 +728,11 @@
     const q = term.trim();
     // One character is enough -- Spotify's own search answers "x" with
     // XXXTENTACION, X, Juice WRLD and Charli xcx, and there is no reason for
-    // this box to be pickier than the one it is borrowing results from.
-    if (q.length < 1) return closeSuggestions();
+    // this box to be pickier than the one it borrows results from.
+    if (!q) return closeSuggestions();
 
     let list = [];
-    if ($src.value === 'genre') {
+    if (cfg().source === 'genre') {
       const lower = q.toLowerCase();
       const seen = new Set();
       const add = (name) => {
@@ -615,10 +770,8 @@
     const term = $arg.value;
     suggestTimer = setTimeout(() => fetchSuggestions(term), 220);
   });
-
   $arg.addEventListener('focus', () => { if ($arg.value.trim()) fetchSuggestions($arg.value); });
   $arg.addEventListener('blur', () => setTimeout(closeSuggestions, 120));
-
   $arg.addEventListener('keydown', (e) => {
     const open = $sugg.dataset.open === '1' && suggestions.length;
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -636,30 +789,117 @@
     if (open && cursor >= 0) choose(cursor);
     else { closeSuggestions(); startGame(); }
   });
+
+  // ---- starting a game -------------------------------------------------------
+
+  async function startGame() {
+    const c = cfg();
+    if ((c.source === 'artist' || c.source === 'genre') && !c.arg.trim()) {
+      Spicetify.showNotification(`Enter ${c.source === 'artist' ? 'an artist' : 'a genre'} first`, true);
+      $arg.focus();
+      return;
+    }
+    setBusy(true);
+    try {
+      const tracks = await buildQueue(c);
+      if (!tracks.length) {
+        // Harder means a LOWER playcount floor, so an empty easy round is fixed
+        // by going harder, not easier. Worth stating: the instinct on an empty
+        // result is to reach the other way.
+        Spicetify.showNotification(
+          `Nothing that popular in ${LABELS[c.source].toLowerCase()} - try a harder difficulty`, true);
+        return;
+      }
+      const uris = shuffle(uniq(tracks.map((t) => t.uri))).slice(0, TARGET);
+      gameQueue = new Set(uris);
+      try { localStorage.setItem(QUEUE_KEY, JSON.stringify(uris)); } catch {}
+      openPanel(false);
+      // The app's own contract, unchanged: it expands, shuffles and plays what
+      // arrives in state.URIs, and the timestamp is what makes an identical
+      // route a new game rather than a no-op.
+      Spicetify.Platform.History.push({
+        pathname: '/name-that-tune',
+        search: `?t=${Date.now()}`,
+        state: { URIs: uris },
+      });
+      Spicetify.showNotification(`${uris.length} songs - ${LABELS[c.source]}, ${c.difficulty}`);
+    } catch (e) {
+      Spicetify.showNotification(String(e?.message || e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ---- wiring ----------------------------------------------------------------
+
+  const c0 = cfg();
+  buildSegment($srcSeg, SOURCES, SRC_KEY, () => {
+    // An artist URI means nothing once the source is a genre, and vice versa.
+    localStorage.removeItem(ARG_URI_KEY);
+    closeSuggestions();
+    syncArgField();
+    if (root.dataset.arg === '1') $arg.focus();
+  });
+  buildSegment($diffSeg, DIFFICULTIES, DIFF_KEY, () => {});
+  paintSegment($srcSeg, c0.source);
+  paintSegment($diffSeg, c0.difficulty);
+  $arg.value = c0.arg;
+  syncArgField();
+
   $go.addEventListener('click', startGame);
+  $new.addEventListener('click', () => openPanel(true));
+  $close.addEventListener('click', () => openPanel(false));
+  // Clicking away closes the panel only when there is a game behind it. With no
+  // game there is nothing to dismiss TO, and a panel that vanished would leave
+  // the page with no way back to it except the button it just hid.
+  root.querySelector('#lqx-ntt-scrim').addEventListener('mousedown', () => {
+    if (gameActive()) openPanel(false);
+  });
 
-  // Typing a genre must not reach the keybinds, which are global and would read
-  // a bare letter as a shortcut.
-  bar.addEventListener('keydown', (e) => e.stopPropagation());
+  // Typing here must not reach the keybinds, which are global and would read a
+  // bare letter as a shortcut. Escape closes the panel, but only when there is
+  // a game behind it to go back to.
+  root.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && root.dataset.panel === '1' && gameActive()) openPanel(false);
+    e.stopPropagation();
+  });
 
-  // Anchored under the main view rather than centred on the window: the sidebar
+  // The panel opens by itself when you arrive with no game to come back to, and
+  // stays shut otherwise. Only on ARRIVAL: reopening it under someone who has
+  // just closed it would be worse than never opening it at all.
+  let wasOnRoute = false;
+  function syncRoute() {
+    const onRoute = /^\/name-that-tune/.test(Spicetify.Platform?.History?.location?.pathname || '');
+    const active = onRoute && gameActive();
+    root.dataset.active = active ? '1' : '0';
+    if (onRoute && !wasOnRoute) openPanel(!active);
+    if (!onRoute) closeSuggestions();
+    wasOnRoute = onRoute;
+  }
+
+  // Anchored to the main view rather than centred on the window: the sidebar
   // and the friend feed are not the same width, so window-centred would sit
   // visibly off from the game's own column.
   function place() {
     const view = document.querySelector('.Root__main-view');
     if (!view) return;
     const r = view.getBoundingClientRect();
-    bar.style.left = `${Math.round(r.left + r.width / 2)}px`;
-    bar.style.transform = 'translateX(-50%)';
-    bar.style.bottom = `${Math.round(window.innerHeight - r.bottom + 26)}px`;
+    root.style.left = `${Math.round(r.left + 24)}px`;
+    root.style.top = `${Math.round(r.top + 20)}px`;
+    root.style.width = `${Math.round(r.width - 48)}px`;
+    root.style.height = `${Math.round(r.height - 40)}px`;
   }
+
   place();
+  syncRoute();
   addEventListener('resize', place);
+  try { Spicetify.Platform.History.listen(() => { place(); syncRoute(); }); } catch {}
+  // Whether a game is running can only change when the song does.
+  Spicetify.Player.addEventListener('songchange', syncRoute);
   // The main view resizes when the play bar slides away or a panel opens, and
-  // neither fires anything this could listen to; two seconds is imperceptible
-  // for a bar that only ever moves when the window layout does.
+  // neither fires anything this could listen to.
   setInterval(() => { if (document.body.classList.contains('name-that-tune')) place(); }, 2000);
 
-  window.liquifyNttModes = { cfg, buildQueue, startGame, BANDS };
+  window.liquifyNttModes = { cfg, buildQueue, startGame, dedupe, songKey, BANDS, gameActive };
   console.log('[liquify-ntt-modes] ready');
 })();
