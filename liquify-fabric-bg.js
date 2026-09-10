@@ -213,9 +213,36 @@
     return raw.startsWith('spotify:image:') ? 'https://i.scdn.co/image/' + raw.slice(14) : raw;
   };
   let lastUrl = '', toB = true;
+
+  // Name That Tune blanks the cover art, the track name and the play bar while
+  // a round is running -- and then this background painted the mystery album
+  // across the entire screen, giving the answer away before the first snippet
+  // finished. So while a round is being guessed the artwork is HELD: whatever
+  // was on screen when the round started stays up, and the round's own cover
+  // arrives only once the hold lifts.
+  //
+  // The app's own two body classes are the state, no coordination needed:
+  // its extension keeps `name-that-tune` in sync with the route, and the game
+  // toggles `name-that-tune--guessing` on every transition -- off on a correct
+  // guess and on give-up (both of which reveal the track anyway), on again for
+  // the next song. Crucially it sets the class BEFORE calling Player.next(), so
+  // the songchange for the mystery track already finds the hold in place.
+  //
+  // Both classes are tested, not just --guessing: the app's component does not
+  // clear that class when it unmounts, so on its own it can be left set on the
+  // body. The route class is the one that is genuinely maintained, and it
+  // releases the hold if the game is ever abandoned mid-round.
+  const holding = () =>
+    document.body.classList.contains('name-that-tune') &&
+    document.body.classList.contains('name-that-tune--guessing');
+
   async function refreshArt() {
     const url = artUrl();
     if (!url || url === lastUrl) return;
+    // Before lastUrl is written, so the release below still sees this url as
+    // new and loads it. Recording it here would hold the art until the song
+    // after next.
+    if (holding()) return;
     lastUrl = url;
     const img = await new Promise((r) => {
       const i = new Image();
@@ -242,6 +269,20 @@
   let fadeTo = 0;
   Spicetify.Player.addEventListener('songchange', refreshArt);
   refreshArt();
+
+  // Catches the release. songchange cannot: the track the hold skipped is
+  // already playing by then, so nothing further is emitted for it. An attribute
+  // observer on <body> with no subtree fires only when a class changes on that
+  // one node -- three times per round here -- and the callback compares two
+  // booleans, so this is nothing like the subtree observer that once starved
+  // the renderer.
+  let wasHeld = holding();
+  new MutationObserver(() => {
+    const held = holding();
+    if (held === wasHeld) return;
+    wasHeld = held;
+    if (!held) refreshArt();
+  }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
   // ---- grips ----
   //
@@ -406,6 +447,12 @@
 
   window.liquifyFabric = {
     canvas, cfg,
+    // Which cover is actually on the shader, and whether it is being held off
+    // the player. Worth exposing rather than leaving in the closure: this
+    // background deliberately lags the player during Name That Tune, so "is the
+    // right art up" stops being answerable by looking at the now playing bar.
+    get art() { return lastUrl; },
+    get held() { return holding(); },
     set: (o = {}) => {
       const map = { strength: STRENGTH_KEY, speed: SPEED_KEY, blur: BLUR_KEY, fps: FPS_KEY };
       for (const k of Object.keys(map)) if (o[k] != null) localStorage.setItem(map[k], String(o[k]));
