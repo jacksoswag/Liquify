@@ -70,5 +70,9 @@
   "transparent-custom-apps": {
     "title": "Transparent Custom Apps",
     "description": "Clears the opaque page background custom apps ship with, so they sit on the theme's backdrop instead of a flat black panel."
+  },
+  "hide-name-that-tune-icon": {
+    "title": "Hide Name That Tune Button",
+    "description": "Removes the Name That Tune icon from the top bar. The game stays reachable with Alt+T, which navigates to the route directly rather than clicking the button."
   }
 }

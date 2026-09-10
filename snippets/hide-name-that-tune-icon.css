@@ -1,0 +1,17 @@
+/* Hide Name That Tune Button — Removes the Name That Tune icon from the top bar. The game stays reachable with Alt+T. */
+
+/* aria-label is the only stable hook: the button carries no href and no data
+   attribute of its own, and its class list is entirely Encore's generic
+   button classes shared with every other tertiary icon button in the bar.
+   The label is the custom app's name from its manifest, not a translated
+   string, so it does not move between locales.
+   
+   Scoped to .custom-navlink so it cannot reach the Marketplace icon sitting
+   next to it -- that one has its own snippet.
+   
+   display:none rather than removal, and nothing depends on the button being
+   clickable anyway: Alt+T in liquify-keys.js navigates to the route directly
+   rather than clicking this. */
+.custom-navlink[aria-label="Name That Tune"] {
+  display: none !important;
+}
