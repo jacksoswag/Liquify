@@ -279,6 +279,32 @@ Pruning has to be done with a stylesheet, not the `hidden` attribute:
 `.liquifyRow { display: flex }` is an author rule, so it wins. Setting
 `el.hidden` and reading it back reports success and hides nothing.
 
+### Playlist header metadata row
+
+Three separate causes made that one line look wrong, and only one of them was
+Spotify's:
+
+The doubled bullet is Spotify's. It draws the separator before the song count
+twice -- once as a real `.main-entityHeader-divider` span, once as a `::before`
+on the count itself -- so a snippet written against spans alone cannot see the
+duplicate. The first version of `fix-duplicate-metadata-dots` was exactly that
+snippet, and what its `span + span` actually matched was the save count, whose
+previous sibling happens to be a divider. It read as a fix only because hiding
+the saves also hid every divider after it.
+
+The bite out of the owner's avatar is ours. Spotify clips each collaborator
+face with a crescent notch (`clip-path: url(#avatarClipPath)`) so the face
+behind it reads as a gap rather than a seam -- and the thing this one was
+notched around is the invite-collaborators button that
+`hide-sort-and-collaborator` removes. With nothing behind it the notch just
+carves a sliver off the left edge, so that snippet now drops the clip too.
+
+`3 hr 19 min` -> `3hr 19min` is in `liquify-ui-tweaks.js` rather than a snippet
+because CSS cannot reach inside a string and no formatter setting produces it
+either: Spotify builds the duration with Intl unit formatting, whose styles are
+`short` (`3 hr, 19 min`) and `narrow` (`3h 19m`). Keeping the words while
+dropping the space in front of them is not a locale that exists.
+
 ### Install
 
 ```

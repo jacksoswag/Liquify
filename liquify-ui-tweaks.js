@@ -562,3 +562,67 @@
 
   window.liquifyUiTweaks = { sweep, HIDE_CHIPS };
 })();
+
+// ---- compact durations in entity headers ----
+//
+// "3 hr 19 min" -> "3hr 19min" in the playlist/album header metadata row.
+//
+// This is here rather than in a snippet because CSS cannot reach inside a
+// string, and because no formatter setting produces it either: Spotify builds
+// the duration with Intl unit formatting, and the styles on offer are "short"
+// ("3 hr, 19 min") and "narrow" ("3h 19m"). Keeping the "hr"/"min" words while
+// dropping the space in front of them is not a locale that exists, so the only
+// place to do it is after the string is rendered.
+//
+// Editing text React owns is usually the thing to avoid, and it is safe here
+// for a specific reason: React diffs its own previous render, not the DOM. It
+// never reads back what we wrote, so our edit cannot make it think the value
+// changed; and when the duration genuinely does change it writes the whole
+// string again, which the observers below catch.
+(function compactHeaderDurations() {
+  const SEL = '.main-entityHeader-metadataFullTime';
+  const TIGHTEN = /(\d)\s+(hr|min|sec)\b/g;
+
+  // Comparing the result is both the guard and the work. Gating on
+  // `TIGHTEN.test(t)` instead would be the classic /g footgun -- test()
+  // advances lastIndex and replace() resets it, so a shared global regex used
+  // for both starts matching from the wrong offset on alternate calls.
+  const tighten = (el) => {
+    const was = el.textContent;
+    if (!was) return;
+    const now = was.replace(TIGHTEN, '$1$2');
+    if (now !== was) el.textContent = now;
+  };
+
+  // Re-tighten when the string is rewritten in place. Adding a track changes
+  // the duration without remounting the header, so there is no childList
+  // mutation for the sweep below to notice -- only characterData on a text
+  // node that is already there. Our own write re-enters this callback once and
+  // stops, since by then there is nothing left to change.
+  const watched = new WeakSet();
+  const inPlace = new MutationObserver((records) => {
+    for (const r of records) {
+      const el = r.target.nodeType === 3 ? r.target.parentElement : r.target;
+      if (el) tighten(el);
+    }
+  });
+
+  const sweepTimes = () => {
+    for (const el of document.querySelectorAll(SEL)) {
+      tighten(el);
+      if (watched.has(el)) continue;
+      watched.add(el);
+      inPlace.observe(el, { characterData: true, childList: true, subtree: true });
+    }
+  };
+
+  let pending = false;
+  const queue = () => {
+    if (pending) return;
+    pending = true;
+    setTimeout(() => { pending = false; sweepTimes(); }, 60);
+  };
+
+  sweepTimes();
+  new MutationObserver(queue).observe(document.body, { childList: true, subtree: true });
+})();

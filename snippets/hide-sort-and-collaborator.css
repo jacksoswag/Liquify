@@ -9,3 +9,21 @@ button[aria-label^="Invite collaborators"],
 button[aria-label^="Add collaborator"] {
   display: none !important;
 }
+
+/* Hiding the invite button leaves a bite out of the owner's avatar.
+   Spotify stacks the collaborator faces like overlapping coins, and to keep
+   the seam readable each avatar is clipped with a crescent notch cut out of
+   its leading edge (clip-path: url(#avatarClipPath)) so the face behind it
+   shows through as a gap rather than a hard edge. The notch is paid for by an
+   inline `inset-inline-start: -1.6px` that slides the circle back under the
+   thing it is notched around.
+
+   With the invite button gone there is nothing behind the avatar, so the notch
+   has nothing to clear -- it just carves a visible sliver off the far-left
+   edge of the profile picture. Dropping the clip restores the full circle; the
+   1.6px offset is left alone, since it is what keeps the spacing to the owner
+   name unchanged. Scoped to the entity header so real collaborator stacks and
+   Jam facepiles elsewhere keep their notches. */
+.main-entityHeader-creatorWrapper figure > div {
+  clip-path: none !important;
+}

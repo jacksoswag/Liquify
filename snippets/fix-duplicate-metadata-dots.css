@@ -1,5 +1,40 @@
-/* Fix Duplicate Playlist Metadata Dots — Spotify emits two adjacent bullet separators between the playlist owner and the song-count/duration, plus a trailing orphan bullet. This collapses them to a single separator. */
-/* second of any adjacent bullet pair */
-.main-entityHeader-metaData > span + span { display: none !important; }
-/* trailing orphan bullet after the last real item */
-.main-entityHeader-metaData > span:last-child { display: none !important; }
+/* Fix Duplicate Playlist Metadata Dots — Spotify draws the separator between the playlist owner and the song count twice: once as a real divider span, once as a ::before on the song-count block. This drops the pseudo-element, and the separator left orphaned by the hidden save count. */
+
+/* The bullets in this row are not all the same kind of node, which is what the
+   first version of this snippet got wrong. The row is:
+                                                            (song count)
+     [owner] [divider span] [N saves] [divider span] [N songs, H hr M min] [divider span]
+
+   The second visible dot is not one of those spans at all -- it is a ::before
+   on the song-count block, so no span selector can ever reach it. The old rule
+   (`.main-entityHeader-metaData > span + span`) therefore left the duplicate
+   standing, and what it hid instead was the SAVE COUNT: that span's previous
+   sibling is a divider, so `span + span` matched it. It read as a fix only
+   because hiding the saves also hid every divider after it, leaving one dot.
+
+   So: kill the pseudo-element, and never let a rule here reach content. */
+.main-entityHeader-metaData > .main-entityHeader-divider + .main-entityHeader-metaDataText::before {
+  content: none !important;
+}
+
+/* Trailing orphan divider after the last real item. */
+.main-entityHeader-metaData > .main-entityHeader-divider:last-child {
+  display: none !important;
+}
+
+/* The save count stays hidden -- that was the visible behaviour before this
+   snippet was rewritten, and it is worth keeping deliberately rather than as a
+   side effect. Delete this rule to get "jacada • 2 saves • 52 songs" back.
+   Two things it has to get right:
+
+   - Its trailing divider goes with it. `+` walks the DOM, not the rendered
+     row, so the divider after a display:none span is still "adjacent" to
+     something that is not on screen, and would come back as a second dot.
+   - It is scoped to playlist pages. `.main-entityHeader-metaDataTextSubdued`
+     is not "the save count", it is "subdued text in an entity header" -- on an
+     album header the same class holds the release year, and an unscoped rule
+     here would quietly delete that. */
+[data-testid="playlist-page"] .main-entityHeader-metaData > .main-entityHeader-metaDataTextSubdued,
+[data-testid="playlist-page"] .main-entityHeader-metaData > .main-entityHeader-metaDataTextSubdued + .main-entityHeader-divider {
+  display: none !important;
+}

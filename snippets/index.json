@@ -17,7 +17,7 @@
   },
   "hide-sort-and-collaborator": {
     "title": "Hide Sort By & Add Collaborator",
-    "description": "Removes the sort dropdown and the invite-collaborators button from playlist pages."
+    "description": "Removes the sort dropdown and the invite-collaborators button from playlist pages, and un-notches the owner avatar that button was clipped to make room for."
   },
   "hide-add-mix-details-row": {
     "title": "Hide Add / Mix / Name & Details Row",
@@ -25,7 +25,7 @@
   },
   "fix-duplicate-metadata-dots": {
     "title": "Fix Duplicate Playlist Metadata Dots",
-    "description": "Spotify emits two adjacent bullet separators between the playlist owner and the song-count/duration, plus a trailing orphan bullet. This collapses them to a single separator."
+    "description": "Spotify draws the separator between the playlist owner and the song-count/duration twice: once as a real divider span, once as a ::before on the song count. This drops the pseudo-element and the trailing orphan, leaving a single bullet."
   },
   "liquid-lyrics-fill-npv": {
     "title": "Liquid Lyrics Fill Now Playing Panel",
