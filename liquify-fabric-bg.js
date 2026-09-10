@@ -578,8 +578,21 @@
   // sample DOM pixels.
   //
   // Turn off with localStorage liquify-shader-glass = 'off'.
+  // OFF by default now, and that is the point of the change that turned it off.
+  //
+  // This pass drew the three big containers' glass itself so they would not
+  // need backdrop-filter, which was the right trade when they were the only
+  // things that could not have it. The cost of it, though, was that the theme
+  // had two kinds of glass: this one on the chrome, and the SVG displacement
+  // chain on everything else. They did not match, and the chain -- the one on
+  // the play bar -- is the one that looks like glass.
+  //
+  // So the panels take backdrop-filter again, with that same chain, and the
+  // reason it is affordable is that this file's own background canvas is
+  // already CSS-blurred before any panel filters it. Each panel adds 2px, not
+  // fifty. Set liquify-shader-glass = 'on' to put this pass back.
   const GLASS_KEY = 'liquify-shader-glass';
-  const glassWanted = () => localStorage.getItem(GLASS_KEY) !== 'off';
+  const glassWanted = () => localStorage.getItem(GLASS_KEY) === 'on';
 
   // Half resolution rather than the background's quarter. The background can be
   // coarse because a CSS blur is smeared over it afterwards; this canvas has no
@@ -605,30 +618,6 @@
   const TAPS = 16;
   const PANELS = ['.Root__nav-bar', '.Root__main-view', '.Root__right-sidebar'];
 
-  // Chromatic aberration, same localStorage key the SVG filter chain in
-  // liquify-perf.js has always used, so the one checkbox drives both: the
-  // shader for the three panels it draws, the SVG for the play bar and the
-  // handful of small surfaces still on backdrop-filter.
-  //
-  // How far red and blue are split, as a fraction of the BLUR RADIUS.
-  //
-  // Not of the refraction, which is what a physical scaling would use and what
-  // the first two attempts here used. The backdrop is an album cover blurred by
-  // up to fifty pixels; a two-pixel channel split on an image that smooth is
-  // real, measures 1/255, and cannot be seen. The fringe has to be a fraction
-  // of the smoothing to survive it. Still multiplied by the rim inside the
-  // shader, so it is strongest on the panel border and exactly zero in the
-  // middle.
-  const CHROMA_KEY = 'liquify-glass-chromatic';
-  const chromaOn = () => localStorage.getItem(CHROMA_KEY) === 'on';
-  const DISPERSION = 0.6;
-  // Width of the fringe band, in canvas pixels -- so 7 is 14 on screen, against
-  // the 104 the bend itself eases over. Narrow on purpose: this is meant to
-  // read as the edge of a piece of glass catching the light, not as a coloured
-  // border. It is also what gates the three extra texture reads, so tightening
-  // it from the refraction band to this took them from about a third of the
-  // panel pixels to well under a tenth.
-  const FRINGE = 7;
 
   const gCanvas = document.createElement('canvas');
   gCanvas.id = 'lqx-glass';
@@ -650,7 +639,7 @@
   in vec2 vUv;
   out vec4 outColor;
   uniform sampler2D uA, uB;
-  uniform float uMix, uT, uAmp, uZoom, uLod, uRefract, uTint, uEdge, uSpread, uChroma, uFringe;
+  uniform float uMix, uT, uAmp, uZoom, uLod, uRefract, uTint, uEdge, uSpread;
   uniform vec2 uCover, uMean, uRes;
   uniform vec4 uGrip[${GRIPS}];
   uniform vec2 uGW[${GRIPS}];
@@ -752,18 +741,6 @@
     float rim = 1. - (1. - rx) * (1. - ry);
     vec2 n = normalize(vec2(sign(rel.x) * rx, sign(rel.y) * ry) + 1e-5);
 
-    // The fringe rides its own band, not the refraction's.
-    //
-    // The bend eases in over uEdge -- 52 canvas pixels, 104 on screen -- because
-    // a slab of glass that changes shape inside a finger's width reads as a
-    // crease rather than a curve. A colour fringe wants the opposite: dispersion
-    // is only visible where the bend is steepest, which is the outermost few
-    // pixels, and spread across the whole falloff it stops being a fringe and
-    // becomes a wash. Built the same way as rim so it is smooth through the
-    // corners -- two per-axis ramps joined as a smooth union, never a min().
-    float gx = 1. - smoothstep(0., uFringe, toEdge.x);
-    float gy = 1. - smoothstep(0., uFringe, toEdge.y);
-    float edge = 1. - (1. - gx) * (1. - gy);
     vec2 bend = n * rim * uRefract * vec2(1., -1.) / uRes;
     vec2 uv0 = vUv + bend;
 
@@ -786,77 +763,16 @@
     for (int i=0;i<${TAPS};i++) acc += samp(t + DISC[i] * uSpread, uLod);
     vec3 col = acc / float(${TAPS});
 
-    // Chromatic aberration: red short of the bend, blue past it.
-    //
-    // The displacement is a fraction of the BLUR RADIUS, not of the bend, and
-    // that is the whole lesson of the previous two attempts. What this pass
-    // disperses is not a photograph, it is an album cover that has already been
-    // dimmed, dropped to a quarter resolution and blurred by up to fifty
-    // pixels. Splitting the channels by the two or three pixels a physically
-    // scaled dispersion asks for lands red and blue on the same colour: the
-    // fringe was there, it measured 1/255, and it was invisible. To see a
-    // fringe on an image that smooth the split has to be a real fraction of the
-    // smoothing, which is what uChroma means here.
-    //
-    // Sampled outright rather than fitted from the taps. An earlier version
-    // read the slope across the sixteen taps for free, which is exact and costs
-    // nothing -- and cannot produce a fringe wider than the disc it measures,
-    // which is precisely the fringe that is too small to see. A displacement
-    // this large is extrapolation for that method and an ordinary texture
-    // fetch for this one.
-    //
-    // Three fetches, and only inside the rim band -- about 31% of the panel
-    // pixels, since uEdge is 52 canvas px against sidebars 194 px wide. The
-    // branch is not uniform, but the band is far wider than a wave's footprint,
-    // so only tiles straddling its boundary pay both sides. Weighted, +0.9
-    // fetches per pixel against sixteen.
-    //
-    // uLod+1 for all three: the base colour above is a mip PLUS a tap disc, and
-    // a bare fetch at uLod would carry detail the base does not have, so the
-    // difference would inject sharp texture rather than a colour shift. One mip
-    // level up is a texel the width of the disc, which is the blur the disc
-    // produces.
-    if (uChroma > 0. && edge > 0.02) {
-      vec2 dsp = n * vec2(1., -1.) * uCover * uZoom * (uChroma * edge * uSpread);
-      float lod = uLod + 1.;
-      vec3 mid = samp(t, lod);
-      col.r += samp(t + dsp, lod).r - mid.r;
-      col.b += samp(t - dsp, lod).b - mid.b;
-    }
 
     // Brighter than the background it is set into (that layer is dimmed to
     // .45), which is what reads as "this panel is lit from within".
     col *= uTint;
-    // A sheen along the rim, strongest where the refraction is -- and split
-    // into its ends when dispersion is on.
+    // A cool sheen along the rim, strongest where the refraction is.
     //
-    // The sampled fringe above needs the backdrop to HAVE an edge under the
-    // rim, and over the large flat areas a fifty-pixel blur makes, it does not:
-    // measured over a rim sitting on flat colour, red and blue both moved
-    // 0.03/255. This highlight is generated rather than sampled, so it always
-    // has an edge to disperse.
-    //
-    // Two bands rather than a tint across the whole rim, because that is the
-    // shape dispersion has: a bevel does not colour its face, it throws the
-    // ends of the spectrum apart by a pixel or two perpendicular to the edge,
-    // and you see two thin lines of opposite hue. rim^6 hugs the border, and
-    // what is left of rim^2 after subtracting it sits just inside -- warm
-    // outermost, cool behind it, which is the way round a prism does it.
-    //
-    // Driven by depth into the rim rather than by direction, so it works on the
-    // horizontal edges and through the corners. An earlier version keyed the
-    // split to n.x and therefore did nothing at all along the top and bottom of
-    // a panel, where that component is zero. Six multiply-adds, no fetches.
-    //
-    // Scaled by what is under it, because dispersion splits the light already
-    // there rather than adding any. A flat amount looked right on a mid-tone
-    // cover and drowned a dark one: against artwork at luminance 0.1 a fixed
-    // 0.12 is more than the picture. The small floor keeps an edge visible on
-    // near-black art, where otherwise there would be nothing to split.
-    float lum = dot(col, vec3(.299, .587, .114)) + 0.07;
+    // Not split into its ends any more. Chromatic aberration is one algorithm
+    // now, in liquify-perf.js, and it is the SVG displacement chain that has
+    // always drawn the play bar -- see the note above the glass pass.
     col += rim * rim * 0.06;
-    float warm = edge * edge * edge;
-    col += uChroma * 0.9 * lum * (warm * vec3(1., .1, -.35) + (edge - warm) * vec3(-.35, .1, 1.));
     outColor = vec4(col * inside, inside);   // premultiplied
   }`;
 
@@ -898,8 +814,7 @@
                cover: U('uCover'), zoom: U('uZoom'), mean: U('uMean'), res: U('uRes'),
                grip: U('uGrip'), gw: U('uGW'), rect: U('uRect'), rad: U('uRad'),
                count: U('uCount'), lod: U('uLod'), refract: U('uRefract'),
-               tint: U('uTint'), edge: U('uEdge'), spread: U('uSpread'),
-               chroma: U('uChroma'), fringe: U('uFringe') };
+               tint: U('uTint'), edge: U('uEdge'), spread: U('uSpread') };
       g2.uniform1i(gUni.A, 0);
       g2.uniform1i(gUni.B, 1);
       g2.enable(g2.BLEND);
@@ -1051,8 +966,6 @@
     const warp = Math.max(0, Math.min(1, strength / 100));
     g2.uniform1f(gUni.refract, 20 * warp);
     g2.uniform1f(gUni.edge, 52);
-    g2.uniform1f(gUni.chroma, chromaOn() ? DISPERSION : 0);
-    g2.uniform1f(gUni.fringe, FRINGE);
     // The SAME dimming as the background, not a step above it.
     //
     // "Lit from within" was a nice idea and the wrong one here: the panels
