@@ -610,14 +610,18 @@
   // shader for the three panels it draws, the SVG for the play bar and the
   // handful of small surfaces still on backdrop-filter.
   //
-  // The number is a fraction of the refraction, not a pixel count -- real
-  // dispersion is "red bends less than blue", so the fringe scales with how
-  // hard the glass is bending, which is the Warp slider. It is therefore
-  // exactly zero in the flat middle of a panel and strongest on the rim, with
-  // no test anywhere in the shader to make that true.
+  // How far red and blue are split, as a fraction of the BLUR RADIUS.
+  //
+  // Not of the refraction, which is what a physical scaling would use and what
+  // the first two attempts here used. The backdrop is an album cover blurred by
+  // up to fifty pixels; a two-pixel channel split on an image that smooth is
+  // real, measures 1/255, and cannot be seen. The fringe has to be a fraction
+  // of the smoothing to survive it. Still multiplied by the rim inside the
+  // shader, so it is strongest on the panel border and exactly zero in the
+  // middle.
   const CHROMA_KEY = 'liquify-glass-chromatic';
   const chromaOn = () => localStorage.getItem(CHROMA_KEY) === 'on';
-  const DISPERSION = 0.22;
+  const DISPERSION = 0.6;
 
   const gCanvas = document.createElement('canvas');
   gCanvas.id = 'lqx-glass';
@@ -656,15 +660,9 @@
   // for the image to alias against.
   //
   // RECENTRED so the sixteen offsets sum to zero. A finite golden-angle spiral
-  // does not: these sixteen have a centroid 0.03 of the radius off-centre,
-  // which does two things, one cosmetic and one not. Cosmetic: the blur is
-  // very slightly lopsided, always in the same direction. Not cosmetic: the
-  // dispersion below fits a slope to these offsets, and an uncentred fit of a
-  // FLAT image does not return zero -- it returns the image's own brightness
-  // times the centroid, which is a solid colour cast on the rim rather than a
-  // fringe on an edge. Subtracting the mean costs nothing at run time and
-  // removes the whole class of error at the source; the fit below is centred as
-  // well, so neither depends on the other being right.
+  // does not -- these sixteen have a centroid 0.03 of the radius off-centre --
+  // so the blur was very slightly lopsided, always in the same direction.
+  // Subtracting the mean costs nothing at run time.
   const vec2 DISC[${TAPS}] = vec2[${TAPS}](
     vec2( 0.189936, 0.027087), vec2(-0.212612, 0.233913),
     vec2( 0.047718,-0.366684), vec2( 0.297731, 0.398260),
@@ -685,10 +683,10 @@
   // draw takes the same side, so there is no warp divergence to pay for, and
   // textureLod takes an explicit level so it is legal in any control flow
   // (texture() would not be -- it needs derivatives).
-  vec3 samp(vec2 uv){
-    if (uMix <= 0.001) return textureLod(uA, uv, uLod).rgb;
-    if (uMix >= 0.999) return textureLod(uB, uv, uLod).rgb;
-    return mix(textureLod(uA, uv, uLod), textureLod(uB, uv, uLod), uMix).rgb;
+  vec3 samp(vec2 uv, float lod){
+    if (uMix <= 0.001) return textureLod(uA, uv, lod).rgb;
+    if (uMix >= 0.999) return textureLod(uB, uv, lod).rgb;
+    return mix(textureLod(uA, uv, lod), textureLod(uB, uv, lod), uMix).rgb;
   }
 
   float sdRound(vec2 p, vec2 halfSize, float r){
@@ -752,11 +750,6 @@
     vec2 uv = uv0 + (pull(uv0) - uMean);
     vec2 t = (uv-.5)*uCover*uZoom + .5;
 
-    // The same bend in TEXTURE units, which is what the taps are measured in.
-    // uCover*uZoom is the mapping's Jacobian; pull's own gradient is a few
-    // percent and is not worth a second evaluation of pull() to fold in.
-    vec2 bt = bend * uCover * uZoom;
-
     // Blur as a mip level PLUS a tap disc, rather than mip level alone.
     //
     // One read at a high mip is the cheap way and it falls apart exactly where
@@ -769,92 +762,82 @@
     // So the mip is held to a level that still has detail and the rest of the
     // radius comes from spreading the taps. Points on a golden-angle spiral,
     // which fills a disc evenly at any count without a pattern to alias with.
-    // The same loop also measures the slope of the image along the bend, for
-    // the chromatic fringe, without taking one extra texture fetch.
-    //
-    // Chromatic aberration IS a directional derivative: resampling a channel a
-    // distance s along a direction and subtracting is s*dC/ds to first order.
-    // Sampling three whole discs at three displaced points -- the obvious
-    // implementation -- spends 32 more reads to measure a slope these taps
-    // already straddle. The displacement the fringe wants is a FRACTION of the
-    // disc radius (about half of it at the default blur), so the value being
-    // asked for lies inside the disc: this is interpolation, not extrapolation.
-    //
-    // The fit is least squares rather than a two-point difference: s is each
-    // tap's own offset projected onto the bend. That is what keeps the fringe
-    // from pulsing as a corner turns the bend through ninety degrees and the
-    // sixteen fixed points fall differently against it.
-    //
-    // CENTRED least squares -- the means of s and of c are subtracted. Skipping
-    // that is only valid when sum(s) is zero, and the recentred disc above does
-    // make it zero, but the two guards are independent on purpose: get either
-    // one wrong and an uncentred fit reports a slope for a picture that has
-    // none, which paints the rim a flat colour instead of fringing its edges.
     vec3 acc = vec3(0.);
-    vec3 dacc = vec3(0.);
-    float sacc = 0.;
-    float ss = 0.;
-    for (int i=0;i<${TAPS};i++){
-      vec2 off = DISC[i] * uSpread;
-      vec3 c = samp(t + off);
-      acc += c;
-      float s = dot(off, bt);
-      dacc += c * s;
-      sacc += s;
-      ss += s * s;
-    }
-    const float N = float(${TAPS});
-    vec3 col = acc / N;
+    for (int i=0;i<${TAPS};i++) acc += samp(t + DISC[i] * uSpread, uLod);
+    vec3 col = acc / float(${TAPS});
 
-    // Red rides short of the bend, blue past it. The ratio is the slope per
-    // texture unit along bt, and dot(bt,bt) turns it back into the displacement
-    // those two channels actually take; uChroma is what fraction of the bend
-    // that displacement is. Both sums scale as |bt|^2, so projecting onto the
-    // UNnormalised bend and multiplying back recovers it for free and keeps
-    // normalize(), and its zero vector, out of this entirely.
+    // Chromatic aberration: red short of the bend, blue past it.
     //
-    // Exactly zero in the flat middle of a panel with no branch anywhere,
-    // because bt is the zero vector there and every term goes to zero with it.
-    // The 1e-12 is only so the ratio is 0/eps rather than 0/0.
+    // The displacement is a fraction of the BLUR RADIUS, not of the bend, and
+    // that is the whole lesson of the previous two attempts. What this pass
+    // disperses is not a photograph, it is an album cover that has already been
+    // dimmed, dropped to a quarter resolution and blurred by up to fifty
+    // pixels. Splitting the channels by the two or three pixels a physically
+    // scaled dispersion asks for lands red and blue on the same colour: the
+    // fringe was there, it measured 1/255, and it was invisible. To see a
+    // fringe on an image that smooth the split has to be a real fraction of the
+    // smoothing, which is what uChroma means here.
     //
-    // Clamped because a first-order estimate across a hard edge in the cover
-    // can overshoot the gamut, and a clamp is two instructions.
-    float den = ss - sacc * sacc / N + 1e-12;
-    vec3 fringe = (dacc - acc * (sacc / N)) * (uChroma * dot(bt, bt) / den);
-    col.r -= clamp(fringe.r, -.25, .25);
-    col.b += clamp(fringe.b, -.25, .25);
-
-    // Chromatic aberration.
+    // Sampled outright rather than fitted from the taps. An earlier version
+    // read the slope across the sixteen taps for free, which is exact and costs
+    // nothing -- and cannot produce a fringe wider than the disc it measures,
+    // which is precisely the fringe that is too small to see. A displacement
+    // this large is extrapolation for that method and an ordinary texture
+    // fetch for this one.
     //
-    // Dispersion is not a post-effect smeared over the panel -- it is the same
-    // refraction that produced uv0, evaluated at three wavelengths. So it is
-    // the refraction vector that gets scaled per channel, which means it is
-    // ZERO everywhere rim is zero: the flat middle of a panel does not disperse,
-    // only the curved edge does. That is what makes this cheap enough to leave
-    // on. The rim band is 26px of a canvas whose panels are 194-328px wide, so
-    // roughly a quarter of the drawn pixels reach this at all, and the other
-    // three quarters branch straight past it on a condition that is coherent
-    // across whole blocks of the screen rather than per pixel.
+    // Three fetches, and only inside the rim band -- about 31% of the panel
+    // pixels, since uEdge is 52 canvas px against sidebars 194 px wide. The
+    // branch is not uniform, but the band is far wider than a wave's footprint,
+    // so only tiles straddling its boundary pay both sides. Weighted, +0.9
+    // fetches per pixel against sixteen.
     //
-    // Three extra reads there, not twenty-four: running the whole tap disc per
-    // channel would triple the pass. Instead the disc is computed once and only
-    // the DIFFERENCE each channel's displacement makes is carried on single
-    // reads. That approximation is exact in the limit of a smooth image and the
-    // image here is already smooth -- uLod is chosen so the mip alone is a
-    // blurred picture -- so what the disc would have added to the difference is
-    // below the quantisation of the frame buffer.
+    // uLod+1 for all three: the base colour above is a mip PLUS a tap disc, and
+    // a bare fetch at uLod would carry detail the base does not have, so the
+    // difference would inject sharp texture rather than a colour shift. One mip
+    // level up is a texel the width of the disc, which is the blur the disc
+    // produces.
     if (uChroma > 0. && rim > 0.02) {
-      vec2 dsp = n * rim * uRefract * uChroma * vec2(1., -1.) / uRes * uCover * uZoom;
-      vec3 mid = samp(t);
-      col.r += samp(t + dsp).r - mid.r;
-      col.b += samp(t - dsp).b - mid.b;
+      vec2 dsp = n * vec2(1., -1.) * uCover * uZoom * (uChroma * rim * uSpread);
+      float lod = uLod + 1.;
+      vec3 mid = samp(t, lod);
+      col.r += samp(t + dsp, lod).r - mid.r;
+      col.b += samp(t - dsp, lod).b - mid.b;
     }
 
     // Brighter than the background it is set into (that layer is dimmed to
     // .45), which is what reads as "this panel is lit from within".
     col *= uTint;
-    // A cool sheen along the rim, strongest where the refraction is.
-    col += rim * rim * 0.06;
+    // A sheen along the rim, strongest where the refraction is -- and split
+    // into its ends when dispersion is on.
+    //
+    // The sampled fringe above needs the backdrop to HAVE an edge under the
+    // rim, and over the large flat areas a fifty-pixel blur makes, it does not:
+    // measured over a rim sitting on flat colour, red and blue both moved
+    // 0.03/255. This highlight is generated rather than sampled, so it always
+    // has an edge to disperse.
+    //
+    // Two bands rather than a tint across the whole rim, because that is the
+    // shape dispersion has: a bevel does not colour its face, it throws the
+    // ends of the spectrum apart by a pixel or two perpendicular to the edge,
+    // and you see two thin lines of opposite hue. rim^6 hugs the border, and
+    // what is left of rim^2 after subtracting it sits just inside -- warm
+    // outermost, cool behind it, which is the way round a prism does it.
+    //
+    // Driven by depth into the rim rather than by direction, so it works on the
+    // horizontal edges and through the corners. An earlier version keyed the
+    // split to n.x and therefore did nothing at all along the top and bottom of
+    // a panel, where that component is zero. Six multiply-adds, no fetches.
+    //
+    // Scaled by what is under it, because dispersion splits the light already
+    // there rather than adding any. A flat amount looked right on a mid-tone
+    // cover and drowned a dark one: against artwork at luminance 0.1 a fixed
+    // 0.12 is more than the picture. The small floor keeps an edge visible on
+    // near-black art, where otherwise there would be nothing to split.
+    float a = rim * rim;
+    float b = a * a * a;
+    float lum = dot(col, vec3(.299, .587, .114)) + 0.07;
+    col += a * 0.06;
+    col += uChroma * 0.62 * lum * (b * vec3(1., .1, -.35) + (a - b) * vec3(-.35, .1, 1.));
     outColor = vec4(col * inside, inside);   // premultiplied
   }`;
 
@@ -1049,16 +1032,7 @@
     const warp = Math.max(0, Math.min(1, strength / 100));
     g2.uniform1f(gUni.refract, 20 * warp);
     g2.uniform1f(gUni.edge, 52);
-    // Dispersion, capped to the disc it is measured on.
-    //
-    // The shader estimates the fringe from the slope across the sixteen taps,
-    // and asking for a displacement wider than that disc is asking it to
-    // extrapolate. The cap is what fades the fringe out below a blur of about
-    // 4, which is also the right look: an image with no blur has no dispersion
-    // to show, and at warp 0 there is no bend to disperse at all.
-    const bendMax = (20 * warp) / gCanvas.width;
-    const cap = bendMax > 1e-6 ? spread / bendMax : 0;
-    g2.uniform1f(gUni.chroma, chromaOn() ? Math.min(DISPERSION, cap) : 0);
+    g2.uniform1f(gUni.chroma, chromaOn() ? DISPERSION : 0);
     // The SAME dimming as the background, not a step above it.
     //
     // "Lit from within" was a nice idea and the wrong one here: the panels

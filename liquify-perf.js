@@ -490,11 +490,11 @@
     chroma.innerHTML = `
       <div style="font:600 13px/1.4 inherit;opacity:.9;margin-bottom:4px">Chromatic aberration
         <div style="font:400 11px/1.4 inherit;opacity:.55;margin-top:3px">
-          Red and blue split apart where the glass bends hardest, along the rim
-          of every panel -- the same thing a thick lens edge does to white light.
-          Drawn in the background shader, only for the quarter of the panel that
-          actually curves, so it is three extra texture reads there and none
-          anywhere else. Scales with Warp: no warp, no fringe.
+          Red and blue split apart along the rim of every panel -- the same thing
+          a thick lens edge does to white light. Drawn in the background shader,
+          only for the roughly one third of a panel that is rim, so it is three
+          extra texture reads there and none anywhere else. The split is a
+          fraction of the Blur radius, so more blur means a wider fringe.
         </div>
       </div>
       <label style="display:flex;align-items:center;gap:10px;margin:8px 0;font:400 12px/1 inherit;opacity:.85">
