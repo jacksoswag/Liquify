@@ -1,0 +1,12 @@
+/* Transparent Custom Apps — Custom apps ship their own page background, which lands as a flat opaque panel over the theme's. This clears it so they sit on the same backdrop as the rest of the client. */
+
+/* Name That Tune paints rgb(18,18,18) -- Spotify's default surface colour --
+   across its whole container, so the warped-cover background stops at the
+   page edge and the route reads as a black box.
+   Only the background is cleared: the app's own layout, its glass buttons and
+   its text colours are all left alone. Stats needs no equivalent rule -- its
+   container is already transparent (checked, not assumed). */
+.name-that-tune-module__container {
+  background: none !important;
+  background-color: transparent !important;
+}
