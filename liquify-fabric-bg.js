@@ -214,35 +214,45 @@
   };
   let lastUrl = '', toB = true;
 
-  // Name That Tune blanks the cover art, the track name and the play bar while
-  // a round is running -- and then this background painted the mystery album
-  // across the entire screen, giving the answer away before the first snippet
-  // finished. So while a round is being guessed the artwork is HELD: whatever
-  // was on screen when the round started stays up, and the round's own cover
-  // arrives only once the hold lifts.
+  // Name That Tune blanks the cover art, the track name and the play bar for
+  // the song you are meant to guess -- and then this background painted that
+  // very album across the whole screen, which answers the question before the
+  // first snippet finishes. So while a round is up the artwork is HELD:
+  // whatever was showing when the round started stays up, and the round's own
+  // cover arrives only when the answer does.
   //
-  // The app's own two body classes are the state, no coordination needed:
-  // its extension keeps `name-that-tune` in sync with the route, and the game
-  // toggles `name-that-tune--guessing` on every transition -- off on a correct
-  // guess and on give-up (both of which reveal the track anyway), on again for
-  // the next song. Crucially it sets the class BEFORE calling Player.next(), so
-  // the songchange for the mystery track already finds the hold in place.
+  // Read from the route and from the game's own reveal panel, NOT from the
+  // `name-that-tune--guessing` body class the game maintains. An earlier
+  // version of this used that class and did nothing in the case that matters:
+  // the app sets its classes only from a History.listen callback, so they are
+  // applied when you navigate INTO the game and never when Spotify restores
+  // that route at launch -- which it does every time the game was the last
+  // thing open. liquify-ui-tweaks repairs that omission, but this must keep
+  // working whether or not the repair does.
   //
-  // Both classes are tested, not just --guessing: the app's component does not
-  // clear that class when it unmounts, so on its own it can be left set on the
-  // body. The route class is the one that is genuinely maintained, and it
-  // releases the hold if the game is ever abandoned mid-round.
+  // "No reveal panel" is the test because it is also correct in the moment
+  // before the app has rendered anything, which is exactly the boot case: the
+  // startup refreshArt would otherwise load the mystery cover while the game
+  // was still mounting.
   const holding = () =>
-    document.body.classList.contains('name-that-tune') &&
-    document.body.classList.contains('name-that-tune--guessing');
+    /^\/name-that-tune/.test(Spicetify.Platform?.History?.location?.pathname || '') &&
+    !document.querySelector('.name-that-tune-module__reveal');
 
-  async function refreshArt() {
-    const url = artUrl();
+  // What is on the shader, remembered across restarts. Only needed for one
+  // case, but that case is the common one: boot straight into a held round and
+  // there IS no previous song this session, so with nothing to fall back on the
+  // background would come up empty. This is the cover from before Spotify was
+  // closed -- genuinely the last thing that played.
+  const ART_KEY = 'liquify-fabric-last-art';
+
+  // `force` loads a specific cover regardless of the hold; it is how the stored
+  // one gets in. Everything else passes nothing and follows the player.
+  async function refreshArt(force) {
+    const url = force || artUrl();
     if (!url || url === lastUrl) return;
-    // Before lastUrl is written, so the release below still sees this url as
-    // new and loads it. Recording it here would hold the art until the song
-    // after next.
-    if (holding()) return;
+    // Before lastUrl is written, so the release still sees this url as new and
+    // loads it. Recording it here would hold the art until the song after next.
+    if (!force && holding()) { syncHold(); return; }
     lastUrl = url;
     const img = await new Promise((r) => {
       const i = new Image();
@@ -265,24 +275,43 @@
     }
     fadeTo = toB ? 1 : 0;
     toB = !toB;
+    try { localStorage.setItem(ART_KEY, url); } catch {}
   }
   let fadeTo = 0;
-  Spicetify.Player.addEventListener('songchange', refreshArt);
-  refreshArt();
 
   // Catches the release. songchange cannot: the track the hold skipped is
-  // already playing by then, so nothing further is emitted for it. An attribute
-  // observer on <body> with no subtree fires only when a class changes on that
-  // one node -- three times per round here -- and the callback compares two
-  // booleans, so this is nothing like the subtree observer that once starved
-  // the renderer.
-  let wasHeld = holding();
-  new MutationObserver(() => {
-    const held = holding();
-    if (held === wasHeld) return;
-    wasHeld = held;
-    if (!held) refreshArt();
-  }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  // already playing by the time the answer is revealed, so nothing further is
+  // emitted for it.
+  //
+  // A poll, deliberately, and not an observer: the element worth watching for
+  // is created deep inside a custom app's own subtree, and waiting for it means
+  // a subtree observer over the whole document -- the shape that once starved
+  // this renderer. This timer exists ONLY while a round is being held. It
+  // starts when a hold first bites and clears itself the moment the hold lifts,
+  // so outside the game there is no timer at all.
+  //
+  // Declared before the first refreshArt() call rather than after it: that call
+  // reaches syncHold on the boot-into-the-game path, and holdPoll would still
+  // be in its temporal dead zone.
+  let holdPoll = null;
+  function syncHold() {
+    if (holding()) {
+      if (!holdPoll) holdPoll = setInterval(syncHold, 300);
+      // Booting into a round: the hold is correct, but it has nothing to hold
+      // ON to, because no cover has been loaded this session. The stored one is
+      // the song that played before Spotify was closed.
+      if (!haveArt) { const last = localStorage.getItem(ART_KEY); if (last) refreshArt(last); }
+      return;
+    }
+    if (holdPoll) { clearInterval(holdPoll); holdPoll = null; }
+    refreshArt();
+  }
+
+  // Wrapped: the listener is handed an event, and refreshArt now reads its
+  // first argument as a cover to force.
+  Spicetify.Player.addEventListener('songchange', () => refreshArt());
+  syncHold();                                  // also the initial refreshArt
+  try { Spicetify.Platform.History.listen(syncHold); } catch {}
 
   // ---- grips ----
   //

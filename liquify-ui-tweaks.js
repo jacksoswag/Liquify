@@ -287,8 +287,59 @@
     const lq = document.querySelector(LQ_PANEL);
     if (lq && !lq.querySelector('.lqx-settings-tabs')) lq.prepend(buildTabs('liquify'));
   }
-  new MutationObserver(decorate).observe(document.body, { childList: true, subtree: true });
+  // ---- Name That Tune: the body classes it forgets on a cold start ----
+  //
+  // The game conceals the answer entirely through two body classes,
+  // `name-that-tune` and `name-that-tune--guessing`: its own stylesheet uses
+  // them to blank the play bar's cover, title and artist, the Now Playing
+  // view, and the skip buttons.
+  //
+  // Its extension sets them from a Spicetify History.listen callback and
+  // nowhere else. So they are applied when you NAVIGATE to the game, and never
+  // when Spotify restores that route at launch -- which it does every time the
+  // game was the last thing open. Boot straight into a round and the app
+  // renders with none of its own concealment: the play bar names the mystery
+  // track, shows its cover, and this theme's background paints its album across
+  // the screen. Verified: the answer was legible in the play bar before the
+  // first snippet played.
+  //
+  // Repaired from here rather than in the app, which is a vendored minified
+  // bundle any update would overwrite.
+  //
+  // ADD ONLY. The game removes both classes correctly on its own (classList
+  // .toggle with an explicit false removes), so there is nothing to fight over
+  // and no window in which this could take the concealment away mid-round --
+  // in particular not the one inside nextSong(), which sets the class before
+  // React has cleared the previous reveal.
+  const NTT_ROUTE = /^\/name-that-tune/;
+  const onNttRoute = () => NTT_ROUTE.test(Spicetify.Platform?.History?.location?.pathname || '');
+  const nttRevealed = () => !!document.querySelector('.name-that-tune-module__reveal');
+
+  function repairNameThatTune() {
+    if (!onNttRoute()) return;
+    document.body.classList.add('name-that-tune');
+    if (!nttRevealed()) document.body.classList.add('name-that-tune--guessing');
+  }
+
+  // The one case add-only cannot reach: booting onto the route with the game
+  // already showing an answer. Nothing has rendered yet at that point, so the
+  // absent reveal panel above reads as "a round is up" and hides the play bar
+  // for a reveal that is not hidden anyway. Assuming a round IS the right
+  // default -- guessing wrong the other way puts the answer on screen -- so it
+  // is corrected once, when the app is actually up, and then left to the game.
+  (function settleNameThatTune(tries) {
+    if (!onNttRoute()) return;
+    if (!document.querySelector('.name-that-tune-module__container')) {
+      if (tries > 0) setTimeout(() => settleNameThatTune(tries - 1), 150);
+      return;
+    }
+    if (nttRevealed()) document.body.classList.remove('name-that-tune--guessing');
+  })(60);
+
+  new MutationObserver(() => { decorate(); repairNameThatTune(); })
+    .observe(document.body, { childList: true, subtree: true });
   decorate();
+  repairNameThatTune();
 
   const settingsStyle = document.createElement('style');
   settingsStyle.id = 'lqx-settings-merge-style';
