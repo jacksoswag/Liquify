@@ -217,8 +217,8 @@
     ['cmd',       'KeyP',       'Add track to playlist…',     addToPlaylist],
     ['cmd+shift', 'KeyM',       'Mute / unmute',              () => Spicetify.Player.toggleMute()],
     ['cmd+shift', 'KeyC',       'Copy track link',            copyTrackLink],
-    ['cmd',       'KeyB',       'Toggle header bar',          toggleHeaderBar],
-    ['cmd+shift', 'KeyB',       'Toggle play bar',            togglePlayBar],
+    ['cmd',       'KeyB',       'Toggle play bar',            togglePlayBar],
+    ['cmd+shift', 'KeyB',       'Toggle header bar',          toggleHeaderBar],
     ['',          'ArrowLeft',  'Back 5 seconds',             () => seek(-5000)],
     ['',          'ArrowRight', 'Forward 5 seconds',          () => seek(5000)],
 
