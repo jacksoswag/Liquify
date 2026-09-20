@@ -1,0 +1,7 @@
+/* Spicetify Marketplace catalog snippet "Disable Homepage Recommendations",
+   vendored here because Marketplace snippet toggles live in Spotify's browser
+   storage and a Spotify update wiped them (2026-09-14). hide-home-chrome.css
+   depends on this: it hides every Home section except the shortcuts grid. */
+[data-testid='home-page'] .contentSpacing > *:not(.view-homeShortcutsGrid-shortcuts, [data-testid='component-shelf']:has([href="/genre/recently-played"], [href="/section/0JQ5DAnM3wGh0gz1MXnu3z"])) {
+  display: none !important;
+}

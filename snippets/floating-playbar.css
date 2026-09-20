@@ -1,0 +1,2 @@
+/* Lift the 65%-width player off the bottom edge so it actually floats. */
+.Root__now-playing-bar { margin-bottom: 18px !important; }

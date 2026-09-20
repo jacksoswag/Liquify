@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# Install this fork as an on-disk spicetify theme + extensions, so nothing
+# depends on Marketplace or Spotify's browser storage (which a Spotify update
+# can and did wipe). Re-run after editing anything.
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+CFG="$(spicetify path userdata 2>/dev/null | tail -1)"
+[ -d "$CFG" ] || { echo "could not locate spicetify userdata"; exit 1; }
+
+# ---- Refuse to run against anything but the pinned Spotify. Everything in
+# this fork targets 1.2.99.317's DOM; applying it to another build would
+# "work" and then look broken in ways that take an afternoon to trace. ----
+WANT=1.2.99.317
+HAVE="$(defaults read /Applications/Spotify.app/Contents/Info.plist CFBundleShortVersionString)"
+[ "$HAVE" = "$WANT" ] || { echo "Spotify is $HAVE, this fork is pinned to $WANT -- reinstall $WANT first"; exit 1; }
+
+# ---- spicetify can only apply if it holds a pristine copy of the app bundle.
+# That copy lives in a state dir that `spicetify clear`, a failed `backup`, or
+# a path-layout change can empty -- which happened on 2026-09-16 and left
+# `spicetify apply` refusing with "You haven't backed up". So a second copy is
+# kept outside spicetify's reach and the backup is refilled from it. ----
+PIN="$HOME/Library/Application Support/Liquify/spotify-$WANT"
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/spicetify"
+if [ ! -s "$STATE/Backup/xpui.spa" ]; then
+  [ -s "$PIN/xpui.spa" ] || { echo "no spicetify backup and no pinned copy at $PIN"; exit 1; }
+  echo "spicetify backup missing -- refilling from $PIN"
+  mkdir -p "$STATE/Backup" "$STATE/Extracted/Raw" "$STATE/Extracted/Themed"
+  cp -p "$PIN/xpui.spa" "$PIN/login.spa" "$STATE/Backup/"
+  for app in xpui login; do
+    rm -rf "$STATE/Extracted/Raw/$app" "$STATE/Extracted/Themed/$app"
+    mkdir -p "$STATE/Extracted/Raw/$app" "$STATE/Extracted/Themed/$app"
+    unzip -qo "$PIN/$app.spa" -d "$STATE/Extracted/Raw/$app"
+    unzip -qo "$PIN/$app.spa" -d "$STATE/Extracted/Themed/$app"
+  done
+fi
+THEME="$CFG/Themes/Liquify"
+mkdir -p "$THEME" "$CFG/Extensions"
+
+# Theme: stock user.css + every snippet, each in a labelled block.
+{
+  cat "$HERE/user.css"
+  echo
+  echo "/* ===== snippets baked in by install.sh (edit snippets/, then re-run) ===== */"
+  python3 - "$HERE/snippets" <<'PY'
+import json, sys, os
+d = sys.argv[1]
+idx = json.load(open(os.path.join(d, "index.json")))
+for key, meta in idx.items():
+    p = os.path.join(d, key + ".css")
+    if not os.path.exists(p):
+        print(f"/* missing: {key} */"); continue
+    print(f"\n/* --- snippet: {meta['title']} ({key}) --- */")
+    print(open(p).read().rstrip())
+PY
+} > "$THEME/user.css"
+cp "$HERE/color.ini" "$HERE/theme.js" "$THEME/"
+
+cp "$HERE"/liquify-perf.js "$HERE"/liquify-ui-tweaks.js "$HERE"/liquify-keys.js \
+   "$HERE"/liquify-fabric-bg.js "$HERE"/liquify-ntt-modes.js "$CFG/Extensions/"
+# Vendored third-party extensions (see vendor/README.md). Liquid Lyrics goes
+# last: Marketplace used to inject it after every spicetify extension, and
+# liquify-ui-tweaks' settings merge was written against that order.
+cp "$HERE"/vendor/liquid-lyrics.js "$CFG/Extensions/"
+
+spicetify config current_theme Liquify >/dev/null
+# Written straight into the ini: `spicetify config extensions` sorts the list
+# alphabetically, and load order is deliberate here (perf first, Liquid Lyrics last).
+sed -i '' 's|^extensions            = .*|extensions            = liquify-perf.js\|liquify-ui-tweaks.js\|liquify-keys.js\|liquify-fabric-bg.js\|liquify-ntt-modes.js\|liquid-lyrics.js|' "$CFG/config-xpui.ini"
+spicetify apply
+echo "installed: theme + $(grep -c '^/\* --- snippet:' "$THEME/user.css") snippets + 5 extensions + Liquid Lyrics. Restart Spotify."
+
+# ---- Pin everything. A Spotify auto-update (1.2.99 -> 1.3.0, 2026-09-14)
+# wiped the browser profile this whole setup used to live in and renamed most
+# of the DOM classes the theme targets. Re-asserted on every install. ----
+U="$HOME/Library/Application Support/Spotify/PersistentCache/Update"
+if [ ! -f "$U" ] || [ -d "$U" ]; then
+  chflags nouchg "$U" 2>/dev/null; rm -rf "$U"; touch "$U"; chmod 000 "$U"
+fi
+chflags uchg "$U"                                   # Spotify can't delete it
+spicetify spotify-updates block >/dev/null 2>&1     # belt and braces
+spicetify config check_spicetify_update 0 >/dev/null 2>&1
+brew pin spicetify-cli >/dev/null 2>&1              # `brew upgrade` skips it
+echo "pinned: Spotify $(defaults read /Applications/Spotify.app/Contents/Info.plist CFBundleShortVersionString), spicetify $(spicetify -v)"

@@ -1,0 +1,5 @@
+/* The theme's first-run onboarding is a full-window click blocker whose card
+   is anchored to the settings gear. With hide-liquify-gear on, the card lands
+   offscreen (x = -274) and there is nothing to dismiss, so every fresh profile
+   (a Spotify update wiped one on 2026-09-14) locks the whole UI. Never show it. */
+.lqObBlocker, .lqObCard, .lqObSpot { display: none !important; }

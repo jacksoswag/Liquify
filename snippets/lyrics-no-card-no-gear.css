@@ -1,0 +1,37 @@
+/* Liquid Lyrics: no song card, no settings gear. Ever.
+
+   The lyrics page is a two-column grid: the card's column (--ll-card-col) plus
+   a gap, then the lyrics column. Merely hiding the card leaves its column and
+   the gap reserved, and the lyrics get squeezed down to the column's 240px
+   minimum. So the card column and the gap collapse to zero and the grid becomes
+   one centred column; the card element itself is removed on top of that.
+   Liquid Lyrics' settings live in the second tab of Liquify's panel (Alt+,),
+   so the gear is dead weight.
+
+   The onboarding tour is anchored to that gear (.ll-ob-blocker covers the whole
+   window until dismissed); with the gear gone it would sit there invisibly
+   eating clicks on every fresh profile -- same failure as
+   no-onboarding-blocker.css for Liquify -- so it goes too. */
+
+.liquid-lyrics-panel .liquid-lyrics-song-card,
+.liquid-lyrics-panel .ll-settings-btn {
+  display: none !important;
+}
+
+.liquid-lyrics-panel .liquid-lyrics-view {
+  --ll-card-col: 0px !important;
+  --ll-gap: 0px !important;
+  grid-template-columns: minmax(240px, auto) !important;
+  gap: 0 !important;
+  justify-content: center !important;
+}
+
+/* No column to offset around any more, so the built-in "card hidden" slide
+   must not apply either. */
+.liquid-lyrics-panel .liquid-lyrics-content {
+  transform: none !important;
+}
+
+.ll-ob-root, .ll-ob-blocker, .ll-ob-card, .ll-ob-spot {
+  display: none !important;
+}

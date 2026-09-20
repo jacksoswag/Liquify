@@ -641,24 +641,31 @@
   const NOOP_ATTR = 'data-lqx-noop';
   const isNoOpBackdrop = (v) => !!v && v !== 'none' && !v.includes('url(') && /^blur\(0(?:px|\.0*px)?\)$/.test(v.trim());
 
+  //
+  // The override has to be lifted before an element is re-judged. Once the
+  // inline `none !important` is on, the computed value IS `none`, so reading it
+  // says nothing about the filter underneath -- and the first version of this
+  // sweep did exactly that, which is why every glass surface that was ever
+  // hidden stayed flat for the rest of the session: the play bar after one
+  // Name That Tune round or one Cmd+B, the playlist action bar after a fade.
   function sweepDeadGlass() {
     if (window.__lqxNoSweep) return;   // benchmark escape hatch
     for (const el of document.querySelectorAll('*')) {
-      const cs = getComputedStyle(el);
-      const bf = cs.backdropFilter || cs.webkitBackdropFilter;
-      if (!bf || bf === 'none') {
-        if (el.hasAttribute(NOOP_ATTR) && !el.style.backdropFilter) el.removeAttribute(NOOP_ATTR);
-        continue;
-      }
-      const dead = isNoOpBackdrop(bf) || parseFloat(cs.opacity) === 0 || cs.visibility === 'hidden';
-      if (dead && !el.hasAttribute(NOOP_ATTR)) {
-        el.setAttribute(NOOP_ATTR, '1');
-        el.style.setProperty('backdrop-filter', 'none', 'important');
-        el.style.setProperty('-webkit-backdrop-filter', 'none', 'important');
-      } else if (!dead && el.hasAttribute(NOOP_ATTR)) {
-        el.removeAttribute(NOOP_ATTR);
+      const marked = el.hasAttribute(NOOP_ATTR);
+      if (marked) {
         el.style.removeProperty('backdrop-filter');
         el.style.removeProperty('-webkit-backdrop-filter');
+      }
+      const cs = getComputedStyle(el);
+      const bf = cs.backdropFilter || cs.webkitBackdropFilter;
+      const dead = !!bf && bf !== 'none' &&
+        (isNoOpBackdrop(bf) || parseFloat(cs.opacity) === 0 || cs.visibility === 'hidden');
+      if (dead) {
+        if (!marked) el.setAttribute(NOOP_ATTR, '1');
+        el.style.setProperty('backdrop-filter', 'none', 'important');
+        el.style.setProperty('-webkit-backdrop-filter', 'none', 'important');
+      } else if (marked) {
+        el.removeAttribute(NOOP_ATTR);
       }
     }
   }

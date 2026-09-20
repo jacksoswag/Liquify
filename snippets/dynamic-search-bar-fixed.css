@@ -25,7 +25,10 @@
   opacity: 1;
 }
 .Root__globalNav .main-globalNav-navLink { background: none; }
-.main-topBar-background { background-color: #121212; }
+/* The upstream snippet paints .main-topBar-background #121212 here. That is
+   the element the theme turns into the scrolled playlist header's glass, and
+   this rule lands after the theme's `.liquify-glass--svg{background:transparent}`
+   in the baked user.css, so it won -- refraction through solid black. */
 
 /* Undo the old snippet's compensations (these caused the bottom render gap). */
 :root { margin-top: 0 !important; }

@@ -74,5 +74,21 @@
   "hide-name-that-tune-icon": {
     "title": "Hide Name That Tune Button",
     "description": "Removes the Name That Tune icon from the top bar. The game stays reachable with Alt+T, which navigates to the route directly rather than clicking the button."
+  },
+  "no-onboarding-blocker": {
+    "title": "Never Show Onboarding Blocker",
+    "description": "Hides the theme's first-run onboarding overlay, which becomes an undismissable click blocker when the settings gear is hidden."
+  },
+  "floating-playbar": {
+    "title": "Floating Playbar",
+    "description": "Lifts the player bar 18px off the bottom edge so the theme's 65%-width pill floats instead of sitting flush."
+  },
+  "disable-homepage-recommendations": {
+    "title": "Disable Homepage Recommendations",
+    "description": "Marketplace catalog snippet, vendored: hides every Home section except the shortcuts grid."
+  },
+  "lyrics-no-card-no-gear": {
+    "title": "Liquid Lyrics: No Song Card, No Gear",
+    "description": "Removes the song card and settings gear from the lyrics page (settings live in Liquify's panel, Alt+,), keeps the lyrics column centred, and disables Liquid Lyrics' gear-anchored onboarding so it can't block clicks."
   }
 }
