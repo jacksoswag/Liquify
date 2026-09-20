@@ -96,6 +96,24 @@ a WebGL canvas cannot stand in for glass that sits over live content, and
 Home sections; the hard half works and its header documents the half that does
 not.
 
+### Installing, and staying installed
+
+Nothing here depends on Marketplace or on Spotify's browser storage -- a
+Spotify auto-update (1.2.99 -> 1.3.0, 2026-09-14) wiped both. `install.sh`
+bakes the snippets into `user.css`, copies the extensions and the vendored
+Liquid Lyrics, writes the load order into `config-xpui.ini`, and re-asserts
+the version lock every time it runs (Spotify pinned to 1.2.99.317, updates
+blocked, spicetify brew-pinned, a pristine copy of the app bundle kept
+outside spicetify's state dir and restored when spicetify loses its own).
+
+The settings-panel choices are the one thing that still lives in browser
+storage. `settings.json` is a snapshot of them; `install.sh` seeds it in
+front of `theme.js`, writing each key only if it is absent, so a wipe gets
+the snapshot back and a choice made later in the panel is left alone. After
+changing settings you want to keep, refresh the snapshot with
+`snapshot-settings.sh` (Spotify has to be running with
+`--remote-debugging-port=9222`; the script says how) and commit it.
+
 ### Measurement method (read this before trusting any number)
 
 Two confounds invalidate naive benchmarking of this app, and both produced
