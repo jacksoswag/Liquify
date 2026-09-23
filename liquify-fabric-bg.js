@@ -272,6 +272,43 @@
 
   let mixv = 0, haveArt = false;
 
+  // The crossfade between covers, advanced by the CLOCK rather than by the
+  // frame.
+  //
+  // It used to be `mixv += (fadeTo - mixv) * 0.06` once per rendered frame,
+  // which quietly assumed two things: that frames arrive at 60 a second, and
+  // that they arrive at all. The second stopped being true the day the mirror
+  // below existed -- frame() returns early while Spotify is hidden, and hidden
+  // is exactly when the desktop wallpaper is the only place this background is
+  // being looked at. A fade that only moves when the window is visible would
+  // sit half-way between two covers on the desktop until someone opened
+  // Spotify.
+  //
+  // So: the same geometric approach, exponentiated by elapsed time. At a dt of
+  // one sixtieth this is 1 - 0.94^1 = 0.06 exactly, so the visible timing at 60
+  // fps is unchanged (~1.7s to settle). Both frame() and the mirror call it,
+  // and they share lastMixAt, so two calls in the same instant advance by
+  // dt ~= 0 rather than twice. The max() keeps the stamp monotonic, because the
+  // two callers read different clocks: a rAF timestamp is the START of the
+  // frame and can be a few ms older than a performance.now() the mirror took
+  // in a message handler a moment earlier. A negative dt must not rewind the
+  // stamp, or the next call would count that stretch twice.
+  //
+  // dt is capped at 0.25s so a fade resumed after a long gap (nothing
+  // rendering, nothing pulling) moves on smoothly instead of jumping to its end.
+  let lastMixAt = 0;
+  function advanceMix(now) {
+    const dt = Math.min(0.25, Math.max(0, (now - lastMixAt) / 1000));
+    lastMixAt = Math.max(lastMixAt, now);
+    if (mixv === fadeTo) return;
+    mixv += (fadeTo - mixv) * (1 - Math.pow(1 - 0.06, dt * 60));   // crossfade on track change
+    // Snap when it is close enough to see, so the glass shader's uniform branch
+    // on uMix can take its one-cover path. A geometric converger never arrives:
+    // left alone it sits a thousandth away from its target for the rest of the
+    // song and keeps both covers being fetched for every tap.
+    if (Math.abs(fadeTo - mixv) < 0.001) mixv = fadeTo;
+  }
+
   // ---- artwork ----
   const artUrl = () => {
     const m = Spicetify.Player.data?.item?.metadata || {};
@@ -366,12 +403,19 @@
     gl.bindTexture(gl.TEXTURE_2D, target);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
     glassUpload(img, toB, !haveArt);
+    mirrorUpload(img, toB, !haveArt);
     if (!haveArt) {                       // first track: fill both, no crossfade
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texA);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
       mixv = toB ? 1 : 0; haveArt = true;
     }
     fadeTo = toB ? 1 : 0;
+    // The fade starts NOW, not at whichever frame next happens to run. Without
+    // this stamp the first advance would count the time since the previous
+    // frame -- up to a tenth of a second at the default idle rate, a quarter of
+    // one after a hidden stretch -- as time already spent fading, and the new
+    // cover would arrive with a visible jump.
+    lastMixAt = performance.now();
     toB = !toB;
     // Only what is legitimately the current cover is worth remembering. A
     // held load (the stored cover being put back at startup) must not rewrite
@@ -454,9 +498,33 @@
   const grips = [];
   for (let i = 0; i < GRIPS; i++) grips.push({ period: 46 + i * 19, phase: Math.random(), cycle: -1, ...newGrip() });
 
-  function gripUniforms(tSec) {
+  // Called from TWO places now -- frame() and the mirror -- and it mutates the
+  // shared grips, so it is worth being precise about why that is safe.
+  //
+  // It is not strictly a pure function of t: a new cycle draws a new grip from
+  // Math.random. What it is, is idempotent within a cycle -- the grip is only
+  // re-drawn when the cycle number CHANGES, so any number of calls at any t
+  // inside one cycle see the same grip, whichever path makes them. The one
+  // place the two paths can disagree is a cycle boundary: they read slightly
+  // different clocks (rAF's frame-start timestamp against the mirror's
+  // performance.now()), so for a few milliseconds one can be in cycle k+1
+  // while the other is still in k, and each call flips the cycle back and
+  // re-draws the grip. That is harmless by construction: the envelope below is
+  // exactly zero at both ends of a cycle (smooth(0) at u = 0, smooth(0) again
+  // at u = 1), and a few ms of t is ~1e-4 of a period, where the weight is
+  // ~1e-6. A grip being re-drawn while it weighs nothing is invisible, and
+  // whichever draw is standing once both clocks are past the boundary simply
+  // becomes that cycle's grip -- for both paths alike.
+  //
+  // All of that holds only while both paths run the SAME clock. A consumer that
+  // asks for a different speed (hello's `speed` multiplier) has a t that is not
+  // just a few ms off but a different number altogether, landing in a different
+  // cycle on every call -- and the two paths would take turns re-drawing each
+  // other's grips at full weight, which is a visible jump every frame. So a
+  // mirror at any other speed passes a grip set of its own.
+  function gripUniforms(tSec, set = grips) {
     const g = new Float32Array(GRIPS * 4), w = new Float32Array(GRIPS * 2);
-    grips.forEach((a, i) => {
+    set.forEach((a, i) => {
       const k = tSec / a.period + a.phase, cyc = Math.floor(k);
       if (cyc !== a.cycle) { a.cycle = cyc; Object.assign(a, newGrip()); }
       const u = k - cyc;
@@ -562,12 +630,10 @@
     gl.useProgram(prog);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texA);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texB);
-    mixv += Math.max(-1, Math.min(1, fadeTo - mixv)) * 0.06;   // crossfade on track change
-    // Snap when it is close enough to see, so the glass shader's uniform branch
-    // on uMix can take its one-cover path. A geometric converger never arrives:
-    // left alone it sits a thousandth away from its target for the rest of the
-    // song and keeps both covers being fetched for every tap.
-    if (Math.abs(fadeTo - mixv) < 0.001) mixv = fadeTo;
+    // After the `crossfading` test above, deliberately: that decides whether
+    // this frame runs at 60 and must see the fade as it stood when the frame
+    // began. The snap inside advanceMix is what eventually makes it false.
+    advanceMix(now);
     gl.uniform1f(uni.mix, mixv);
     gl.uniform1f(uni.t, t);
     const amp = (strength / 100) * 0.55;
@@ -1060,6 +1126,374 @@
     g2.drawArrays(g2.TRIANGLES, 0, 3);
   }
 
+  // ---- mirror -------------------------------------------------------------
+  //
+  // The background, rendered for SOMEONE ELSE. Another local app (the first one
+  // is AeriaLite, which puts it on the macOS desktop as the wallpaper) connects
+  // and asks for frames; this renders them and sends back finished RGBA. The
+  // consumer does no rendering at all, so there is exactly one implementation
+  // of the look and it cannot drift: same shader source, same grips, same
+  // clock, same crossfade, same blur and dim.
+  //
+  // What is sent is the wall AS THE USER SEES IT: the warped cover with the
+  // CSS `blur(px/RES) brightness(DIM)` that #lqx-fabric carries, reproduced
+  // with a 2D canvas filter. Not the glass pass -- that is panel chrome, and a
+  // desktop has no panels.
+  //
+  // Protocol (frozen; README "Mirror frame API" has the consumer's view):
+  //
+  //   this page is the CLIENT, ws://127.0.0.1:47823/liquify, and it retries
+  //   every 3s forever. A connect to a closed localhost port is refused in
+  //   microseconds, and between attempts the whole standing cost is one
+  //   pending timeout, so there is no reason to make anyone opt in. (The one
+  //   visible cost: Chromium logs each refused attempt to the devtools
+  //   console, and no page code can silence that.)
+  //
+  //   consumer -> page   {"type":"hello","v":1,"width":W,"height":H}   points
+  //                      {"type":"pull"}      render one frame, send it, now
+  //   page -> consumer   {"type":"info",...}  after hello, and on change
+  //                      binary frame         32-byte LE header + RGBA8
+  //
+  // PULL, not push, and rendered inside the message handler. Everything else
+  // in this file is driven by requestAnimationFrame, and rAF is not delivered
+  // at all while Spotify is hidden -- which, when the output is the desktop
+  // wallpaper, is the normal case rather than the exception. Timers are
+  // throttled to once a second in a hidden page (once a minute after a while).
+  // A network message event is neither, so the consumer's pull is the one clock
+  // that keeps running, and it does the pacing: one frame in flight, at the
+  // rate the header's fps field asks for.
+  //
+  // Nothing here costs anything until a consumer says hello: the socket
+  // attempts are the whole of it. The GL context, canvases and buffers are
+  // created on the first hello.
+  const MIRROR_URL = 'ws://127.0.0.1:47823/liquify';
+  const MIRROR_RETRY = 3000;
+  const MIRROR_HDR = 32;
+  const MIRROR_MAX = 16384;                // points; a sanity bound on hello, not a real limit
+
+  let mWs = null, mConnected = false;
+  let mW = 0, mH = 0, mHellos = 0;         // consumer display size in points
+  // The consumer's multipliers on Blur, Distortion and Motion speed, for its
+  // frames only: a wallpaper can be blurrier than the wall it copies without
+  // Spotify's own background changing at all. 1 is an exact mirror.
+  let mBlurK = 1, mDistK = 1, mSpeedK = 1;
+  // Only used while mSpeedK is not 1; see gripUniforms.
+  const mGrips = [];
+  for (let i = 0; i < GRIPS; i++) mGrips.push({ period: 46 + i * 19, phase: Math.random(), cycle: -1, ...newGrip() });
+  let mCanvas = null, m2 = null, mProg, mUni, mTexA, mTexB, mReady = false;
+  let mOut = null, mCtx = null, mFilterVia = '';
+  let mBuf = null, mView = null;
+  let mSeq = 0, mFrames = 0, mLastSize = [0, 0], mLastInfo = '';
+  // The cover in each slot, recorded whether or not the context exists yet.
+  // The mirror is normally created in the middle of a song, long after the
+  // cover was uploaded everywhere else, and a context loss empties both
+  // textures; either way the slots are refilled from here. Per SLOT rather
+  // than just lastImg, so a hello or a restore that lands mid-crossfade
+  // resumes the same fade instead of showing the new cover on both sides.
+  const mSlot = [null, null];
+
+  const mMkTex = () => {
+    const t = m2.createTexture();
+    m2.bindTexture(m2.TEXTURE_2D, t);
+    // As the background's own mkTex: clamp, linear, no mips. This pass is the
+    // background, so it samples exactly as the background does.
+    m2.texParameteri(m2.TEXTURE_2D, m2.TEXTURE_WRAP_S, m2.CLAMP_TO_EDGE);
+    m2.texParameteri(m2.TEXTURE_2D, m2.TEXTURE_WRAP_T, m2.CLAMP_TO_EDGE);
+    m2.texParameteri(m2.TEXTURE_2D, m2.TEXTURE_MIN_FILTER, m2.LINEAR);
+    m2.texParameteri(m2.TEXTURE_2D, m2.TEXTURE_MAG_FILTER, m2.LINEAR);
+    m2.texImage2D(m2.TEXTURE_2D, 0, m2.RGBA, 1, 1, 0, m2.RGBA, m2.UNSIGNED_BYTE,
+                  new Uint8Array([0, 0, 0, 255]));
+    return t;
+  };
+
+  function mTexUpload(slot, img) {
+    // Every upload, not once: context state, reset to false by a loss. The
+    // background learned this the hard way (see initGL's restore handler).
+    m2.pixelStorei(m2.UNPACK_FLIP_Y_WEBGL, true);
+    m2.activeTexture(slot ? m2.TEXTURE1 : m2.TEXTURE0);
+    m2.bindTexture(m2.TEXTURE_2D, slot ? mTexB : mTexA);
+    m2.texImage2D(m2.TEXTURE_2D, 0, m2.RGBA, m2.RGBA, m2.UNSIGNED_BYTE, img);
+  }
+
+  // Its own context, for the same reason the glass pass has one: two contexts
+  // cannot share a program or a texture, and borrowing the background's would
+  // mean resizing the on-screen canvas to the desktop's shape and back on every
+  // pull. The shader SOURCE is shared, unchanged -- VS and FS, the same strings
+  // the background compiles -- which is the part that has to agree.
+  function initMirrorGL() {
+    mReady = false;
+    try {
+      const compileM = (type, src) => {
+        const sh = m2.createShader(type);
+        m2.shaderSource(sh, src); m2.compileShader(sh);
+        if (!m2.getShaderParameter(sh, m2.COMPILE_STATUS)) throw new Error(m2.getShaderInfoLog(sh));
+        return sh;
+      };
+      mProg = m2.createProgram();
+      m2.attachShader(mProg, compileM(m2.VERTEX_SHADER, VS));
+      m2.attachShader(mProg, compileM(m2.FRAGMENT_SHADER, FS));
+      m2.linkProgram(mProg);
+      if (!m2.getProgramParameter(mProg, m2.LINK_STATUS)) throw new Error(m2.getProgramInfoLog(mProg));
+      m2.useProgram(mProg);
+      const U = (n) => m2.getUniformLocation(mProg, n);
+      mUni = { A: U('uA'), B: U('uB'), mix: U('uMix'), t: U('uT'), amp: U('uAmp'),
+               cover: U('uCover'), zoom: U('uZoom'), mean: U('uMean'),
+               grip: U('uGrip'), gw: U('uGW') };
+      m2.uniform1i(mUni.A, 0);
+      m2.uniform1i(mUni.B, 1);
+      mTexA = mMkTex();
+      mTexB = mMkTex();
+      for (const s of [0, 1]) if (mSlot[s]) mTexUpload(s, mSlot[s]);
+      mReady = true;
+    } catch (err) {
+      console.warn('[liquify-fabric-bg] mirror pass unavailable:', err.message);
+    }
+    return mReady;
+  }
+
+  // Same semantics as glassUpload, called beside it: the new cover goes in the
+  // B slot or the A slot, and on the first track into both.
+  function mirrorUpload(img, toB, both) {
+    if (!img) return;
+    mSlot[toB ? 1 : 0] = img;
+    if (both) mSlot[toB ? 0 : 1] = img;
+    if (!mReady) return;
+    mTexUpload(toB ? 1 : 0, img);
+    if (both) mTexUpload(toB ? 0 : 1, img);
+  }
+
+  // The CSS filter has to be reproduced by a canvas filter, and whether a 2D
+  // context actually honours `filter` depends on where the context lives:
+  // OffscreenCanvas grew support later than the element did, and a build that
+  // accepts the property and draws unfiltered would pass any check that only
+  // reads it back. So this checks the PIXELS: a small white square drawn under
+  // blur(2px) has to put light somewhere a sharp one would not.
+  function filterWorks(ctx) {
+    try {
+      ctx.canvas.width = 16; ctx.canvas.height = 16;
+      ctx.filter = 'none'; ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 16, 16);
+      ctx.filter = 'blur(2px)'; ctx.fillStyle = '#fff'; ctx.fillRect(7, 7, 2, 2);
+      ctx.filter = 'none';
+      // Two pixels clear of the square; ~18/255 under a working 2px blur, 0
+      // without one.
+      return ctx.getImageData(5, 7, 1, 1).data[0] > 0;
+    } catch { return false; }
+  }
+
+  // willReadFrequently: every frame ends in a getImageData, and a CPU-backed
+  // canvas turns that into a memcpy instead of a GPU readback stall. The
+  // filter then runs in software too, which on a quarter-resolution frame is
+  // the cheap side of that trade. alpha:false because a wallpaper is opaque by
+  // definition; the blurred layer is composited onto black, exactly as the
+  // on-screen one is composited onto whatever sits under the canvas, and the
+  // region that is sent never reaches the part where that shows.
+  const M2D_OPTS = { alpha: false, willReadFrequently: true };
+  function initMirror2D() {
+    if (typeof OffscreenCanvas !== 'undefined') {
+      const c = new OffscreenCanvas(16, 16).getContext('2d', M2D_OPTS);
+      if (c && filterWorks(c)) { mOut = c.canvas; mCtx = c; mFilterVia = 'offscreen'; return; }
+    }
+    // A canvas ELEMENT that is never attached to the document. It is not laid
+    // out and never painted; it is here only because its 2D context is the one
+    // Chromium has always applied `filter` in.
+    const el = document.createElement('canvas');
+    const c = el.getContext('2d', M2D_OPTS);
+    if (!c) return;
+    mOut = el; mCtx = c;
+    mFilterVia = filterWorks(c) ? 'element' : 'none';
+    if (mFilterVia === 'none') console.warn('[liquify-fabric-bg] mirror: no 2D canvas filter; frames go out unblurred');
+  }
+
+  // Lazily, on the first hello. Before that the mirror is a socket and nothing
+  // else.
+  function ensureMirror() {
+    if (!mCtx) initMirror2D();
+    if (m2) return mReady;
+    mCanvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(16, 16)
+                                                     : document.createElement('canvas');
+    // preserveDrawingBuffer: the frame is read back by drawImage in the same
+    // task that drew it, which is fine by the spec either way -- but an
+    // OffscreenCanvas with no placeholder has no compositor frame to anchor
+    // "the buffer is presented, now clear it" to, and a small buffer is a cheap
+    // price for not depending on how any given build reads that.
+    m2 = mCanvas.getContext('webgl2', { alpha: true, antialias: false, depth: false,
+                                        preserveDrawingBuffer: true });
+    if (!m2) { console.warn('[liquify-fabric-bg] mirror: no webgl2'); return false; }
+    // Same contract as the other two contexts: a loss is only ever followed by
+    // a restore if it is preventDefault-ed, and a restore comes back with
+    // nothing in it -- no program, no textures, UNPACK_FLIP_Y back at false.
+    mCanvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); mReady = false; });
+    mCanvas.addEventListener('webglcontextrestored', () => { initMirrorGL(); });
+    return initMirrorGL();
+  }
+
+  function mirrorSend(bytes) {
+    if (!mWs || mWs.readyState !== WebSocket.OPEN) return;
+    // A view onto the reused buffer. WebSocket.send copies the bytes out before
+    // it returns, so the buffer is free to be overwritten by the next pull.
+    mWs.send(new Uint8Array(mBuf, 0, bytes));
+  }
+
+  function mirrorHeader(flags, w, h, fps, now) {
+    const v = mView;
+    v.setUint8(0, 0x4c); v.setUint8(1, 0x51); v.setUint8(2, 0x58); v.setUint8(3, 0x46);  // "LQXF"
+    v.setUint16(4, 1, true);             // version
+    v.setUint16(6, flags, true);         // bit0 crossfading, bit1 empty
+    v.setUint32(8, w, true);
+    v.setUint32(12, h, true);
+    mSeq = (mSeq + 1) >>> 0;
+    v.setUint32(16, mSeq, true);
+    v.setUint32(20, Math.round(fps), true);   // cfg().fps is a parsed float
+    v.setFloat64(24, now, true);
+  }
+
+  function mirrorBuffer(bytes) {
+    if (!mBuf || mBuf.byteLength < bytes) { mBuf = new ArrayBuffer(bytes); mView = new DataView(mBuf); }
+  }
+
+  // One frame, rendered and sent, synchronously. Called from the socket's
+  // message handler, so it runs whether or not Spotify is visible and whether
+  // or not the on-screen loop is running.
+  function mirrorFrame() {
+    const now = performance.now();
+    const { strength: baseStrength, speed, blur: baseBlur, fps } = cfg();
+    // Off is still decided by Spotify's own Distortion: at 0 there is no fabric
+    // background to copy. The multipliers only reshape one that exists.
+    const strength = baseStrength * mDistK, blur = baseBlur * mBlurK;
+    if (!haveArt || baseStrength <= 0 || !mW || !mReady || !mCtx) {
+      // Nothing to show: the header alone, flagged empty, so the consumer's
+      // one frame in flight still comes back. (A lost mirror context lands
+      // here too, for the moment until it is restored.)
+      mirrorBuffer(MIRROR_HDR);
+      mirrorHeader(2 | (mixv !== fadeTo ? 1 : 0), 0, 0, mixv !== fadeTo ? 60 : fps, now);
+      mirrorSend(MIRROR_HDR);
+      mFrames++; mLastSize = [0, 0];
+      return;
+    }
+
+    // Geometry, all from the CONSUMER's display and nothing from Spotify's
+    // window. The GL canvas is the desktop plus the same overscan the
+    // on-screen canvas carries, at the same quarter resolution, so the blur
+    // below fades off the edge of the canvas and not off the edge of the
+    // picture -- exactly the reason #lqx-fabric runs past the viewport.
+    const o = OVER(blur);
+    const gw = Math.ceil((mW + 2 * o) / RES), gh = Math.ceil((mH + 2 * o) / RES);
+    if (mCanvas.width !== gw || mCanvas.height !== gh) { mCanvas.width = gw; mCanvas.height = gh; }
+    m2.viewport(0, 0, gw, gh);
+
+    // Uniforms exactly as frame() computes them: same time base, same grips,
+    // same mean subtraction, same crossfade. Only the aspect is this canvas's
+    // own, because the cover fit is to the surface it is shown on.
+    advanceMix(now);
+    const t = now / 1000 * (speed * mSpeedK / 100) * 0.9;
+    const [g, w] = gripUniforms(t, mSpeedK === 1 ? grips : mGrips);
+    const amp = (strength / 100) * 0.55;
+    const [mx, my] = meanPull(g, w, t, amp);
+    const A = gw / gh;
+    m2.useProgram(mProg);
+    m2.activeTexture(m2.TEXTURE0); m2.bindTexture(m2.TEXTURE_2D, mTexA);
+    m2.activeTexture(m2.TEXTURE1); m2.bindTexture(m2.TEXTURE_2D, mTexB);
+    m2.uniform1f(mUni.mix, mixv);
+    m2.uniform1f(mUni.t, t);
+    m2.uniform1f(mUni.amp, amp);
+    m2.uniform2f(mUni.mean, mx, my);
+    m2.uniform2f(mUni.cover, 1, 1 / A);
+    m2.uniform1f(mUni.zoom, ZOOM);
+    m2.uniform4fv(mUni.grip, g);
+    m2.uniform2fv(mUni.gw, w);
+    m2.drawArrays(m2.TRIANGLES, 0, 3);
+
+    // The CSS filter, reproduced. Same numbers as the #lqx-fabric rule in
+    // applyBlur -- radius divided by RES because this is the small canvas, the
+    // same toFixed so the two strings are literally identical, and halved
+    // under liquify-perf exactly as the html.liquify-perf override halves it.
+    //
+    // Drawn over the WHOLE overscanned canvas and cropped only at readback.
+    // Drawing it pre-cropped would leave it to the filter implementation to
+    // decide whether pixels outside the destination feed the blur; drawing it
+    // whole makes this the same convolution the CSS one is -- the full element,
+    // then the viewport cuts it.
+    if (mOut.width !== gw || mOut.height !== gh) { mOut.width = gw; mOut.height = gh; }
+    const perf = document.documentElement.classList.contains('liquify-perf');
+    const r = perf ? blur / RES / 2 : blur / RES;
+    mCtx.filter = 'none';
+    mCtx.fillStyle = '#000';
+    mCtx.fillRect(0, 0, gw, gh);
+    mCtx.filter = `blur(${r.toFixed(2)}px) brightness(${DIM})`;
+    mCtx.drawImage(mCanvas, 0, 0);
+    mCtx.filter = 'none';
+
+    const off = Math.round(o / RES);
+    const ow = Math.max(1, Math.min(gw - off, Math.round(mW / RES)));
+    const oh = Math.max(1, Math.min(gh - off, Math.round(mH / RES)));
+    const px = mCtx.getImageData(off, off, ow, oh).data;   // top-down, sRGB, straight alpha
+
+    const bytes = MIRROR_HDR + ow * oh * 4;
+    mirrorBuffer(bytes);
+    // Measured AFTER the advance: "would the page be rendering at 60 right
+    // now", which for the frame that finishes a fade is already no.
+    const fading = mixv !== fadeTo;
+    mirrorHeader(fading ? 1 : 0, ow, oh, fading ? 60 : fps, now);
+    new Uint8Array(mBuf, MIRROR_HDR, ow * oh * 4).set(px);
+    mirrorSend(bytes);
+    mFrames++; mLastSize = [ow, oh];
+  }
+
+  // Everything a consumer needs to know besides pixels. Sent after every hello
+  // and then only when it changes, which the apply tick checks.
+  const mirrorInfo = () => {
+    const c = cfg();
+    return JSON.stringify({ type: 'info', v: 1, res: RES, dim: DIM, fps: c.fps, cfg: c,
+                            art: lastUrl, held: holding(), ready: haveArt && c.strength > 0 });
+  };
+  function mirrorInfoTick(force) {
+    if (!mWs || mWs.readyState !== WebSocket.OPEN || !mW) return;
+    const s = mirrorInfo();
+    if (!force && s === mLastInfo) return;
+    mLastInfo = s;
+    mWs.send(s);
+  }
+
+  function mirrorMessage(e) {
+    if (typeof e.data !== 'string') return;
+    let m;
+    try { m = JSON.parse(e.data); } catch { return; }
+    if (!m || typeof m !== 'object') return;
+    if (m.type === 'hello') {
+      const W = Number(m.width), H = Number(m.height);
+      if (!(W >= 1 && H >= 1)) return;
+      mW = Math.min(MIRROR_MAX, W); mH = Math.min(MIRROR_MAX, H);
+      // Optional, so a consumer written before they existed still gets a mirror.
+      const k = (v) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(10, n)) : 1; };
+      mBlurK = k(m.blur ?? 1); mDistK = k(m.distortion ?? 1); mSpeedK = k(m.speed ?? 1);
+      mHellos++;
+      ensureMirror();
+      mirrorInfoTick(true);
+    } else if (m.type === 'pull') {
+      try { mirrorFrame(); } catch (err) { console.warn('[liquify-fabric-bg] mirror frame failed:', err); }
+    }
+  }
+
+  function mirrorConnect() {
+    let s;
+    try { s = new WebSocket(MIRROR_URL); } catch { setTimeout(mirrorConnect, MIRROR_RETRY); return; }
+    s.binaryType = 'arraybuffer';
+    mWs = s;
+    s.onopen = () => { mConnected = true; mLastInfo = ''; };
+    s.onmessage = mirrorMessage;
+    // error and close both arrive for a failed connection, error first. One
+    // retry per socket, however it died.
+    let done = false;
+    const retry = () => {
+      if (done) return;
+      done = true;
+      if (mWs === s) { mWs = null; mConnected = false; mW = 0; mH = 0; mLastInfo = ''; }
+      setTimeout(mirrorConnect, MIRROR_RETRY);
+    };
+    s.onerror = retry;
+    s.onclose = retry;
+  }
+
   const mount = () => {
     const parent = document.querySelector('.Root__top-container');
     if (!parent) return false;
@@ -1148,7 +1582,11 @@
   const boot = () => { if (!mount()) return setTimeout(boot, 600); resize(); applyBlur(cfg().blur); apply(); };
   boot();
   standDownThemeBackground();
-  setInterval(() => { mount(); apply(); standDownThemeBackground(); }, 2000);
+  // Regardless of whether anything is listening; see the mirror section.
+  mirrorConnect();
+  // mirrorInfoTick rides the same slow tick: every field it reports (settings,
+  // the cover, the hold) is one this tick already exists to notice changing.
+  setInterval(() => { mount(); apply(); standDownThemeBackground(); mirrorInfoTick(); }, 2000);
 
   window.liquifyFabric = {
     canvas, cfg,
@@ -1169,6 +1607,14 @@
       return glassFrames;
     },
     get themeBgRemoved() { return stripped; },
+    // The mirror has no screen of its own to look at, so this is the only way
+    // to see from the page whether a consumer is attached, what size it asked
+    // for, and whether frames are actually leaving.
+    mirror: () => ({
+      connected: mConnected, hello: mW ? [mW, mH] : null, hellos: mHellos,
+      ready: mReady, filter: mFilterVia, frames: mFrames, seq: mSeq,
+      lastSize: mLastSize.slice(), mix: mixv, fadeTo,
+    }),
     glass: () => ({
       ready: glassReady, wanted: glassWanted(), panels: panelCount,
       mounted: !!gCanvas.parentElement, size: [gCanvas.width, gCanvas.height],

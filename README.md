@@ -270,6 +270,55 @@ selectors and **80 of them match nothing** on Spotify 1.2.99. They are hashed
 class names from an older build. That, not the filter, is why the glass appears
 on so little.
 
+### Mirror frame API
+
+`liquify-fabric-bg.js` can hand its background to another local app, frame by
+frame, as finished pixels. The consumer renders nothing: it gets the wall **as
+the user sees it** -- warped cover, crossfade, CSS blur and dim (blur halved
+under perf mode) -- minus the per-panel glass. AeriaLite uses this to put the
+background on the macOS desktop, but any local process can consume it.
+
+The page is the **client**. It connects to `ws://127.0.0.1:47823/liquify` at
+boot and retries every 3 s forever, so a consumer only has to listen. Nothing
+beyond the socket is allocated until the first `hello`.
+
+Consumer -> page (text JSON):
+
+| message | effect |
+|---|---|
+| `{"type":"hello","v":1,"width":W,"height":H,"blur":b,"distortion":d,"speed":s}` | W,H = target display size in **points**. `blur`/`distortion`/`speed` are optional multipliers (0–10, default 1) on the matching settings, applied to the consumer's frames only. Page replies with `info`. May be re-sent to change size or multipliers. |
+| `{"type":"pull"}` | Page renders one frame immediately and sends it as one binary message. Works while Spotify is hidden (rAF does not, message events do). The consumer paces: keep one pull in flight. |
+
+Page -> consumer:
+
+- **text** `{"type":"info","v":1,"res":4,"dim":0.45,"fps":N,"cfg":{...},"art":url,"held":bool,"ready":bool}`
+  -- after every hello, and again whenever any field changes (checked every 2 s).
+- **binary** frame: a 32-byte little-endian header, then pixels.
+
+| offset | type | field |
+|---|---|---|
+| 0 | 4 bytes | ASCII `LQXF` |
+| 4 | u16 | version = 1 |
+| 6 | u16 | flags: bit0 crossfading, bit1 empty (no art or distortion 0; width = height = 0, no payload) |
+| 8 | u32 | width (px) |
+| 12 | u32 | height (px) |
+| 16 | u32 | seq, +1 per frame sent |
+| 20 | u32 | fps the page wants to be pulled at right now: 60 while crossfading, else the Frame rate setting |
+| 24 | f64 | `performance.now()`, ms |
+| 32 | bytes | width x height x 4 RGBA8, top-down rows, sRGB, straight alpha (opaque) |
+
+Frames are at the background's own quarter resolution:
+`round(W/4) x round(H/4)` for a hello of W x H points. Scale them up to the
+display; under that much blur the difference cannot be seen, and it is what
+Spotify's own window shows. Rendering depends only on the hello size, never
+on the Spotify window.
+
+The crossfade between covers is timed by the clock, not counted in frames, so
+it runs at the same speed whether the frames are going to Spotify's window, to
+a consumer, or to both. `window.liquifyFabric.mirror()` in the devtools
+console shows connection state, the hello size, frames sent and the last frame
+size.
+
 ### Keyboard
 
 `liquify-keys.js`. Press **`alt+/`** for the full list. Notable:
