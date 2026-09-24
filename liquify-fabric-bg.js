@@ -672,8 +672,8 @@
   // so its glass has to keep refracting real DOM pixels and stays on
   // backdrop-filter -- it is 0.09 megapixels, which is not worth solving. Same
   // for menus, tooltips and modals. This is the same wall the earlier
-  // liquify-glass-gl attempt hit from the other side: a WebGL canvas cannot
-  // sample DOM pixels.
+  // WebGL-background attempt hit from the other side (README, "Why the glass is
+  // not a WebGL canvas"): a WebGL canvas cannot sample DOM pixels.
   //
   // Turn off with localStorage liquify-shader-glass = 'off'.
   //

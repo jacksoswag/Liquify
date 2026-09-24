@@ -74,13 +74,17 @@ cp "$HERE"/liquify-perf.js "$HERE"/liquify-ui-tweaks.js "$HERE"/liquify-keys.js 
 # last: Marketplace used to inject it after every spicetify extension, and
 # liquify-ui-tweaks' settings merge was written against that order.
 cp "$HERE"/vendor/liquid-lyrics.js "$CFG/Extensions/"
+# Name That Tune, the one custom app (liquify-ntt-modes.js configures it).
+mkdir -p "$CFG/CustomApps/name-that-tune"
+cp "$HERE"/vendor/name-that-tune/* "$CFG/CustomApps/name-that-tune/"
 
 spicetify config current_theme Liquify >/dev/null
 # Written straight into the ini: `spicetify config extensions` sorts the list
 # alphabetically, and load order is deliberate here (perf first, Liquid Lyrics last).
 sed -i '' 's|^extensions            = .*|extensions            = liquify-perf.js\|liquify-ui-tweaks.js\|liquify-keys.js\|liquify-fabric-bg.js\|liquify-ntt-modes.js\|liquid-lyrics.js|' "$CFG/config-xpui.ini"
+sed -i '' 's|^custom_apps           = .*|custom_apps           = name-that-tune|' "$CFG/config-xpui.ini"
 spicetify apply
-echo "installed: theme + $(grep -c '^/\* --- snippet:' "$THEME/user.css") snippets + 5 extensions + Liquid Lyrics. Restart Spotify."
+echo "installed: theme + $(grep -c '^/\* --- snippet:' "$THEME/user.css") snippets + 5 extensions + Liquid Lyrics + Name That Tune. Restart Spotify."
 
 # ---- Pin everything. A Spotify auto-update (1.2.99 -> 1.3.0, 2026-09-14)
 # wiped the browser profile this whole setup used to live in and renamed most

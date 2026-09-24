@@ -11527,10 +11527,6 @@ ${eachTransport(" svg")}, ${eachTransport(" path")} { fill: currentColor !import
       options: { borderRadius: 12 }
     },
     {
-      selector: ".e-10451-box--tinted",
-      options: { borderRadius: 20 }
-    },
-    {
       selector: ".main-entityHeader-container",
       options: { borderRadius: 20 }
     },
@@ -11557,10 +11553,6 @@ ${eachTransport(" svg")}, ${eachTransport(" path")} { fill: currentColor !import
     {
       selector: ".PromotionButtonTooltip-module_tooltip-animation__cE-rt",
       options: { borderRadius: 12 }
-    },
-    {
-      selector: ".iiX8td2tfVETS09_ button",
-      options: { borderRadius: 13 }
     },
     {
       selector: ".gpBiAnJHb1gq46qV",
@@ -11695,10 +11687,6 @@ ${eachTransport(" svg")}, ${eachTransport(" path")} { fill: currentColor !import
       options: { borderRadius: 20 }
     },
     {
-      selector: ".qm0mrbeno_z0mpoo",
-      options: { borderRadius: 20 }
-    },
-    {
       selector: ".N3kf5S8O84aeaCZu",
       options: { borderRadius: 20 }
     },
@@ -11721,10 +11709,6 @@ ${eachTransport(" svg")}, ${eachTransport(" path")} { fill: currentColor !import
     {
       selector: ".main-embedWidgetGenerator-container",
       options: { borderRadius: 20 }
-    },
-    {
-      selector: ".e-10451-box--elevated",
-      options: { borderRadius: 15 }
     },
     {
       selector: ".Wzl40f9FIUD91O2o",
@@ -11778,22 +11762,6 @@ ${eachTransport(" svg")}, ${eachTransport(" path")} { fill: currentColor !import
       options: { borderRadius: 20, glassBlur: "5px", applyTo: "before" }
     },
     {
-      selector: ".marketplace-header",
-      options: { borderRadius: 20 }
-    },
-    {
-      selector: ".marketplace-tabBar-active",
-      options: { borderRadius: 20 }
-    },
-    {
-      selector: ".Dropdown-menu",
-      options: { borderRadius: 20 }
-    },
-    {
-      selector: "#marketplace-readme",
-      options: { borderRadius: 20 }
-    },
-    {
       selector: ".liquifySettingsPanel",
       options: { borderRadius: 20, glassBlur: "5px" }
     },
@@ -11832,10 +11800,6 @@ ${eachTransport(" svg")}, ${eachTransport(" path")} { fill: currentColor !import
       options: { borderRadius: 20 }
     },
     {
-      selector: ".wJiY1vDfuci2a4db",
-      options: { borderRadius: 20 }
-    },
-    {
       selector: ".oc3OomY6r9UoIEQ0",
       options: { borderRadius: 20 }
     },
@@ -11845,10 +11809,6 @@ ${eachTransport(" svg")}, ${eachTransport(" path")} { fill: currentColor !import
     },
     {
       selector: ".fA6CNWFY1WQBCde9",
-      options: { borderRadius: 10 }
-    },
-    {
-      selector: ".main-trackCreditsModal-container",
       options: { borderRadius: 10 }
     },
     {
@@ -11863,17 +11823,11 @@ ${eachTransport(" svg")}, ${eachTransport(" path")} { fill: currentColor !import
   var PRECISE_TARGETS = [
     { selector: ".main-trackList-trackListHeader", options: { borderRadius: 20 } },
     { selector: ".main-topBar-background", options: { borderRadius: 0 } },
-    { selector: ".znOINyqAy7ivIGbQyrbt", options: { borderRadius: 20, glassBlur: "5px" } },
-    { selector: ".iGRaSZDa1r0m21aF6oZq", options: { borderRadius: 20 } },
-    { selector: ".niJOWstqVyfckHcXQxP1 .cSZJwcwYgJfwduUmXOOV", options: { borderRadius: 20 } },
     { selector: ".main-nowPlayingView-trackInfo", options: { borderRadius: 20 } },
     { selector: ".main-nowPlayingView-section", options: { borderRadius: 20 } },
-    { selector: ".main-entityHeader-container.gmKBgPCnX785KDicbdJu", options: { borderRadius: 20 } },
     { selector: ".main-home-filterChipsSection", options: { borderRadius: 20 } },
     { selector: ".view-homeShortcutsGrid-shortcut", options: { borderRadius: 20 } },
     { selector: ".main-card-card", options: { borderRadius: 20 } },
-    { selector: ".Root__globalNav .DoxYADBBjYMvoYwl7QPg", options: { borderRadius: 50 } },
-    { selector: ".yfJeY2Xi99dPOe6fsIha", options: { borderRadius: 20 } },
     { selector: ".main-entityHeader-container.main-entityHeader-containerNormal", options: { borderRadius: 20 } },
     { selector: ".x-settings-section", options: { borderRadius: 20 } },
     { selector: ".LR7w41pC8ccVc11Q", options: { borderRadius: 20 } },

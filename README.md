@@ -1,81 +1,14 @@
-<h1 align="center"> ✨ Liquify Theme Spicetify ✨ </h1>
+# Liquify (fork)
 
-<p align="center">
-  <b>A modern, rounded and liquified theme for spicetify</b><br>
-</p>
+A fork of [NMWplays/Liquify](https://github.com/NMWplays/Liquify), the
+glassmorphic Spicetify theme for Spotify (itself inspired by
+[Glassify](https://github.com/sanoojes/spicetify-glassify)). It is Spotify-only:
+the theme plus five extensions, installed from disk by `install.sh` and pinned
+to Spotify 1.2.99.317. Upstream is not tracked; `theme.js` and `user.css`
+started as upstream's and have diverged. AGPL-3.0, like upstream (see
+`LICENSE.txt`).
 
-## Contents
-
-<!-- toc -->
-
-- [Introduction](#introduction)
-- [Theme screenshots](#theme-screenshots)
-- [Features](#features)
-<!-- tocstop -->
-
-## Introduction
-
-**Liquify** - is a glassmorphic Spicetify theme for Spotify featuring a modern, luminous interface and smooth animations.
-
-Liquify is inspired by [Glassify](https://github.com/sanoojes/spicetify-glassify) from [Sanoojes](https://github.com/sanoojes).
-
-If your transparent controls don’t look fully transparent — for example when zooming in on Spotify — you can easily change the width and height of them in the Glowify Settings to make them fully transparent again.
-
-If you like the theme, consider starring the repository on GitHub! ⭐
-
-**For support join the Discord!**:
-
-<a href="https://discord.gg/QRMnrgjhvq" target="_blank">
-  <img src="discord-icon.png" alt="Discord-server-link" width="64" />
-</a>
-
-## Theme screenshots
-
-<details>
-<summary>Click to watch screenshots</summary>
-<img width="1919" height="1029" alt="Homescreen" src="https://github.com/user-attachments/assets/a7d50e6e-56be-4a8b-8ea6-8835655d4cdf" />
-
-<img width="1919" height="1029" alt="Playlist" src="https://github.com/user-attachments/assets/5375a463-10a4-428e-8e5c-f43d76e03509" />
-
-<img width="1919" height="1030" alt="Search" src="https://github.com/user-attachments/assets/71d1c7a5-bca6-47d3-880c-8c0e85c45bce" />
-
-<img width="1919" height="1030" alt="Artist-Page" src="https://github.com/user-attachments/assets/60151e06-8a6a-4548-a882-1c267c18e7ca" />
-
-<img width="1919" height="1028" alt="Artist-Page2" src="https://github.com/user-attachments/assets/fa9bdb4f-666e-4380-9ee3-2da6b33be730" />
-
-<img width="1919" height="1030" alt="Liquify-Settings" src="https://github.com/user-attachments/assets/0ab96146-4868-468c-8a22-7cb03fa992c1" />
-
-<img width="1919" height="1030" alt="Popup" src="https://github.com/user-attachments/assets/59b2f2e9-b273-4f2a-9d06-7e562be21f8d" />
-
-<img width="1919" height="1029" alt="Settings" src="https://github.com/user-attachments/assets/f37cfbef-7d3e-4ed4-bab5-0dfeae4362aa" />
-
-<img width="1919" height="1030" alt="Fullscreen" src="https://github.com/user-attachments/assets/7b147a4f-6f48-4123-bf65-96b4a94d44e0" />
-
-</details>
-
----
-
-## Features
-
-**Liquify offers:**
-
-- Many customization options
--  `Beatiful Lyrics`, `Spicy Lyrics` and `Lucid Lyrics` are supported by default
-- Beautiful dynamic colors (Just enable dynamic button colors in the settings and your good to go)
-- Modern, rounded UI
-- And much more!
-
-## Credits
-
-Created by NMW.
-
-## License
-
-This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0). See the LICENSE file for details.
-
----
-
-## Performance fork (`perf` branch)
+## This fork
 
 A rewrite of how Liquify draws its liquid glass, plus a keyboard layer, a
 Name That Tune game and a settings cleanup. Five extensions:
@@ -88,13 +21,8 @@ Name That Tune game and a settings cleanup. Five extensions:
 | `liquify-ui-tweaks.js` | settings merge and pruning, Liquid Lyrics desync repair |
 | `liquify-ntt-modes.js` | source, difficulty and round settings for Name That Tune |
 
-Two more files in the repo are **not** loaded and are kept on purpose, so they
-are not leftovers to tidy away: `liquify-glass-gl.js` is the superseded first
-attempt at a GL background, kept because the note at the top of it explains why
-a WebGL canvas cannot stand in for glass that sits over live content, and
-`liquify-fabric-bg.js` cites it. `liquify-home-apps.js` renders custom apps as
-Home sections; the hard half works and its header documents the half that does
-not.
+Two third-party pieces are vendored under `vendor/` (see its README): Liquid
+Lyrics and the Name That Tune custom app.
 
 ### Installing, and staying installed
 
@@ -112,7 +40,8 @@ front of `theme.js`, writing each key only if it is absent, so a wipe gets
 the snapshot back and a choice made later in the panel is left alone. After
 changing settings you want to keep, refresh the snapshot with
 `snapshot-settings.sh` (Spotify has to be running with
-`--remote-debugging-port=9222`; the script says how) and commit it.
+`--remote-debugging-port=9222`; the script says how) and commit it. Quit
+Spotify and open it normally afterwards, so the debugging port closes.
 
 ### Measurement method (read this before trusting any number)
 
@@ -265,10 +194,28 @@ surface with nothing but background behind it.
 
 Filtered area is **0.104 megapixels, 8% of the viewport, five surfaces.**
 
-Worth knowing if you touch the selector list: the theme ships 89 glass
-selectors and **80 of them match nothing** on Spotify 1.2.99. They are hashed
-class names from an older build. That, not the filter, is why the glass appears
-on so little.
+Worth knowing if you touch the selector list: the theme shipped 89 glass
+selectors and **80 of them matched nothing** on the views measured on Spotify
+1.2.99. That, not the filter, is why the glass appears on so little. The 16
+entries of `GLASS_TARGETS`/`PRECISE_TARGETS` whose class names appear nowhere
+in the 1.2.99.317 bundle (Encore `e-10451-*` classes, renamed modals,
+Marketplace) are deleted; the rest exist in the bundle and may match on a view
+that was not measured, so they stay.
+
+### Why the glass is not a WebGL canvas
+
+The first GL attempt (`liquify-glass-gl.js`, deleted; see git history) moved
+the background onto a WebGL canvas with a drifting texture read. It was
+correct and gained nothing measurable: 70-76% GPU either way over two paired
+runs of six interleaved cycles. The expensive thing was never producing the
+background; it was that a background changing every frame invalidates every
+`backdrop-filter` surface above it. Moving the glass to the GPU as well cannot
+work, because a WebGL canvas cannot sample DOM pixels: panels over track lists
+and grids would refract only the album art. The shader background in
+`liquify-fabric-bg.js` works because the canvas is ordinary page content at the
+bottom of the stack, so the remaining `backdrop-filter`s sample it like any
+other layer, and its glass pass covers only the three chrome containers that
+have nothing but background behind them.
 
 ### Mirror frame API
 
@@ -278,9 +225,14 @@ the user sees it** -- warped cover, crossfade, CSS blur and dim (blur halved
 under perf mode) -- minus the per-panel glass. AeriaLite uses this to put the
 background on the macOS desktop, but any local process can consume it.
 
+This section is the one definition of the protocol. AeriaLite's
+`src/wallpaper-extension/LiquifyMirror.swift` implements the consumer and
+points here.
+
 The page is the **client**. It connects to `ws://127.0.0.1:47823/liquify` at
 boot and retries every 3 s forever, so a consumer only has to listen. Nothing
-beyond the socket is allocated until the first `hello`.
+beyond the socket is allocated until the first `hello`. AeriaLite listens only
+while its menu app runs; otherwise the retries fail quietly.
 
 Consumer -> page (text JSON):
 
@@ -374,11 +326,15 @@ dropping the space in front of them is not a locale that exists.
 
 ### Install
 
-```
-cp liquify-*.js "$(spicetify path userdata)/Extensions/"
-spicetify config extensions liquify-perf.js|liquify-ui-tweaks.js|liquify-keys.js|liquify-fabric-bg.js|liquify-ntt-modes.js
-spicetify apply
-```
+Run `./install.sh`. Tested against Spicetify 2.45.0 and Spotify 1.2.99.317.
+`spicetify restore` puts Spotify back to stock.
 
-Snippets live in `snippets/` and can be pasted into Spicetify Marketplace
-individually. Tested against Spicetify 2.45.0 and Spotify 1.2.99.
+Every run also re-asserts four standing pins that outlive this repo, which is
+the answer to "why won't Spotify update":
+
+| pin | undo |
+|---|---|
+| `~/Library/Application Support/Spotify/PersistentCache/Update` replaced by an immutable (`uchg`) mode-000 file, so Spotify cannot stage an update | `chflags nouchg` that path, then delete it |
+| `spicetify spotify-updates block` | `spicetify spotify-updates unblock` |
+| `spicetify config check_spicetify_update 0` | `spicetify config check_spicetify_update 1` |
+| `brew pin spicetify-cli` | `brew unpin spicetify-cli` |
